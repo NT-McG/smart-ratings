@@ -31,7 +31,8 @@ tr:nth-child(even){background:#121621;}
   <li><strong>Bonus scale</strong> controls how quickly that uncertainty bonus ramps up. Lower values make the bonus kick in earlier and more sharply; higher values make it gentler and require more RD before a large uplift appears.</li>
   <li>A practical way to tune them is to start with moderate values, compare the leaderboard to recent local results, then raise bonus strength or lower bonus scale if improving newcomers still look underrated, or do the reverse if sparse-data fencers are being pushed too high.</li>
   <li>Optionally applies an underdog factor so lower-rated improvers get a little more upside than already-established top players.</li>
-  <li>Groups athletes into quantile-based tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
+  <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
+  <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, worse-than-F tiers continue as F-, G, H, I, and so on.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
   <li>Shows uncertainty (σ) using the underlying Glicko-style deviation, where lower values indicate a more reliable estimate.</li>
   <li>Includes Win % as the expected result against the dataset’s average-strength fencer, providing a simple baseline for competitive advantage.</li>
@@ -85,11 +86,20 @@ tr:nth-child(even){background:#121621;}
 
   const TOP_N = 150;
   const BASE_TIERS = 6;
+  const BASE_TIER_LABELS = ["S", "A", "B", "C", "D", "F"];
   const tbody = document.getElementById("b");
   const modeInput = document.getElementById("mode");
   const bonusScaleInput = document.getElementById("bonusScale");
   const bonusDivisorInput = document.getElementById("bonusDivisor");
   const useUnderdogInput = document.getElementById("useUnderdog");
+
+  const getTierLabel = (index) => {
+    if (index < BASE_TIER_LABELS.length) return BASE_TIER_LABELS[index];
+    if (index === BASE_TIER_LABELS.length) return "F-";
+
+    const extraIndex = index - BASE_TIER_LABELS.length - 1;
+    return String.fromCharCode("G".charCodeAt(0) + extraIndex);
+  };
 
   // ======================
   // FILTER
@@ -189,7 +199,7 @@ tr:nth-child(even){background:#121621;}
     const tierMap = new Map();
 
     tiers.forEach((t,i)=>
-      t.forEach(p=>tierMap.set(p.athlete,"Tier "+(i+1)))
+      t.forEach(p=>tierMap.set(p.athlete, getTierLabel(i)))
     );
 
     // ======================
