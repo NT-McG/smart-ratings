@@ -41,6 +41,8 @@ tr:nth-child(even){background:#121621;}
   const K = 40;
   const TOP_N = 150;
   const BASE_TIERS = 6;
+  const tbody = document.getElementById("b");
+
   // ======================
   // FILTER
   // ======================
@@ -48,19 +50,28 @@ tr:nth-child(even){background:#121621;}
     t = (t || "").toLowerCase();
     return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
   };
+
   // ======================
   // FETCH TABLE
   // ======================
-  const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
-  let players = await res.json();
+  let players = [];
+  try {
+    const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    players = await res.json();
+  } catch (err) {
+    console.error("Failed to load player data:", err);
+    tbody.innerHTML =
+      `<tr><td colspan="8">Failed to load player data. Check the API endpoint / CORS settings.</td></tr>`;
+    return;
+  }
  
-
-  players = players.filter(p =>
-    isAUorNZ(p.nationality)
-  );
+  players = players.filter(p => isAUorNZ(p.nationality));
 
   if (!players.length) {
-    document.getElementById("b").innerHTML =
+    tbody.innerHTML =
       `<tr><td colspan="8">No AU/NZ players found.</td></tr>`;
     return;
   }
@@ -73,11 +84,8 @@ tr:nth-child(even){background:#121621;}
   const muRating = players.reduce((a,b)=>a+b.rating,0)/players.length;
 
   const enriched = players.map(p => {
-
     const cScale = p.confidence / (p.confidence + K);
-
     const skill = muRating + (p.rating - muRating) * cScale;
-
     const sigma = 120 * (1 - cScale) + 20;
 
     return { ...p, skill, sigma };
@@ -130,7 +138,6 @@ tr:nth-child(even){background:#121621;}
     const max = Math.max(...tier.map(p=>p.skill));
 
     tier.forEach(p => {
-
       const z = (p.skill - min) / ((max - min) || 1);
 
       let g = "";
@@ -139,7 +146,6 @@ tr:nth-child(even){background:#121621;}
 
       gradeMap.set(p.athlete, g);
     });
-
   });
 
   // ======================
@@ -157,10 +163,7 @@ tr:nth-child(even){background:#121621;}
   // ======================
   // RENDER
   // ======================
-  const tbody = document.getElementById("b");
-
   sorted.forEach((p,i)=>{
-
     const tier = tierMap.get(p.athlete);
     const grade = gradeMap.get(p.athlete);
 
