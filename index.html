@@ -27,6 +27,9 @@ tr:nth-child(even){background:#121621;}
   <li>Supports both the raw HEMA Rating and an improved local rating that gives controlled upside to higher-uncertainty ratings.</li>
   <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
   <li>Uses a diminishing-returns bonus based on RD, with tunable strength and scale, so uncertainty can raise a fencer’s local seeding estimate without letting sparse data dominate the table.</li>
+  <li><strong>Bonus strength</strong> controls how much the improved local rating rewards uncertainty overall. Higher values make high-RD competitors climb faster; lower values keep the table closer to the raw HEMA Rating.</li>
+  <li><strong>Bonus scale</strong> controls how quickly that uncertainty bonus ramps up. Lower values make the bonus kick in earlier and more sharply; higher values make it gentler and require more RD before a large uplift appears.</li>
+  <li>A practical way to tune them is to start with moderate values, compare the leaderboard to recent local results, then raise bonus strength or lower bonus scale if improving newcomers still look underrated, or do the reverse if sparse-data fencers are being pushed too high.</li>
   <li>Optionally applies an underdog factor so lower-rated improvers get a little more upside than already-established top players.</li>
   <li>Groups athletes into quantile-based tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
