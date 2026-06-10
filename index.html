@@ -24,13 +24,14 @@ tr:nth-child(even){background:#121621;}
 <h3>How to read this table</h3>
 <ul>
   <li>Ranks AU/NZ longsword fencers for local seeding and near-term match prediction, rather than published global rating alone.</li>
-  <li>Supports both the raw HEMA Rating and an improved local rating that gives controlled upside to higher-uncertainty ratings.</li>
+  <li>Supports four views of the same Glicko-style data: raw rating, conservative lower-bound seeding, balanced shrinkage toward the local centre, and an optimistic upside model.</li>
   <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
-  <li>Uses a diminishing-returns bonus based on RD, with tunable strength and scale, so uncertainty can raise a fencer’s local seeding estimate without letting sparse data dominate the table.</li>
-  <li><strong>Bonus strength</strong> controls how much the improved local rating rewards uncertainty overall. Higher values make high-RD competitors climb faster; lower values keep the table closer to the raw HEMA Rating.</li>
-  <li><strong>Bonus scale</strong> controls how quickly that uncertainty bonus ramps up. Lower values make the bonus kick in earlier and more sharply; higher values make it gentler and require more RD before a large uplift appears.</li>
-  <li>A practical way to tune them is to start with moderate values, compare the leaderboard to recent local results, then raise bonus strength or lower bonus scale if improving newcomers still look underrated, or do the reverse if sparse-data fencers are being pushed too high.</li>
-  <li>Optionally applies an underdog factor so lower-rated improvers get a little more upside than already-established top players.</li>
+  <li><strong>Raw</strong> uses published rating only, with no uncertainty adjustment.</li>
+  <li><strong>Conservative</strong> ranks by a lower-confidence style estimate, reducing scores for higher-RD fencers.</li>
+  <li><strong>Balanced</strong> shrinks uncertain ratings toward the local median, so uncertain high ratings come down and uncertain low ratings come up.</li>
+  <li><strong>Optimistic</strong> adds a diminishing-returns RD bonus, which can optionally favor lower-rated improvers slightly more.</li>
+  <li><strong>Strength</strong> controls how much the selected uncertainty adjustment matters overall.</li>
+  <li><strong>Scale</strong> controls how quickly the optimistic uncertainty bonus ramps up.</li>
   <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
@@ -42,25 +43,27 @@ tr:nth-child(even){background:#121621;}
   <label>
     Mode
     <select id="mode">
-      <option value="optimistic" selected>Improved local rating</option>
       <option value="raw">Raw HEMA Rating</option>
+      <option value="conservative">Conservative</option>
+      <option value="balanced">Balanced</option>
+      <option value="optimistic" selected>Optimistic</option>
     </select>
   </label>
   <label>
-    Bonus strength
-    <input id="bonusScale" type="number" min="0" max="100" step="1" value="35" />
+    Strength
+    <input id="adjustmentStrength" type="number" min="0" max="1000" step="1" value="35" />
   </label>
   <label>
-    Bonus scale
+    Scale
     <input id="bonusDivisor" type="number" min="1" max="300" step="1" value="60" />
   </label>
   <label>
     <input id="useUnderdog" type="checkbox" />
-    Underdog boost
+    Underdog boost (optimistic only)
   </label>
 </div>
-<div class="hint">
-  Raw HEMA Rating uses published rating only. Improved local rating adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.
+<div class="hint" id="modeHint">
+  Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.
 </div>
 
 <table>
@@ -89,9 +92,10 @@ tr:nth-child(even){background:#121621;}
   const BASE_TIER_LABELS = ["S", "A", "B", "C", "D", "F"];
   const tbody = document.getElementById("b");
   const modeInput = document.getElementById("mode");
-  const bonusScaleInput = document.getElementById("bonusScale");
+  const adjustmentStrengthInput = document.getElementById("adjustmentStrength");
   const bonusDivisorInput = document.getElementById("bonusDivisor");
   const useUnderdogInput = document.getElementById("useUnderdog");
+  const modeHint = document.getElementById("modeHint");
 
   const getTierLabel = (index) => {
     if (index < BASE_TIER_LABELS.length) return BASE_TIER_LABELS[index];
@@ -103,6 +107,28 @@ tr:nth-child(even){background:#121621;}
     const suffix = suffixCycle[extraIndex % 3];
 
     return `Tier ${tierNumber}${suffix}`;
+  };
+
+  const median = (values) => {
+    if (!values.length) return 0;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+  };
+
+  const getModeHint = (mode) => {
+    if (mode === "raw") {
+      return "Raw mode uses published HEMA Rating only, with no uncertainty adjustment.";
+    }
+    if (mode === "conservative") {
+      return "Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding.";
+    }
+    if (mode === "balanced") {
+      return "Balanced mode shrinks uncertain ratings toward the local median using a smooth RD-based weight.";
+    }
+    return "Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.";
   };
 
   // ======================
@@ -138,13 +164,18 @@ tr:nth-child(even){background:#121621;}
     return;
   }
   
+  const ratingValues = players.map(p => p.rating || 0);
+  const meanRating = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
+  const medianRating = median(ratingValues);
 
   const render = () => {
     const mode = modeInput.value;
-    const bonusScale = Math.max(0, Number(bonusScaleInput.value) || 0);
+    const adjustmentStrength = Math.max(0, Number(adjustmentStrengthInput.value) || 0);
     const bonusDivisor = Math.max(1, Number(bonusDivisorInput.value) || 1);
     const useUnderdog = useUnderdogInput.checked;
-    const meanRating = players.reduce((a,b)=>a+b.rating,0)/players.length;
+
+    modeHint.textContent = getModeHint(mode);
+    useUnderdogInput.disabled = mode !== "optimistic";
 
     // ======================
     // SKILL MODEL
@@ -155,8 +186,14 @@ tr:nth-child(even){background:#121621;}
 
       let skill = rating;
 
-      if (mode === "optimistic") {
-        let bonus = bonusScale * Math.log1p(rd / bonusDivisor);
+      if (mode === "conservative") {
+        skill = rating - adjustmentStrength * rd;
+      } else if (mode === "balanced") {
+        const c = Math.max(1, adjustmentStrength);
+        const weight = (c * c) / ((c * c) + (rd * rd));
+        skill = medianRating + (rating - medianRating) * weight;
+      } else if (mode === "optimistic") {
+        let bonus = adjustmentStrength * Math.log1p(rd / bonusDivisor);
 
         if (useUnderdog) {
           const underdogFactor = Math.max(0.7, Math.min(1.5, 1 + (meanRating - rating) / 400));
@@ -265,7 +302,7 @@ tr:nth-child(even){background:#121621;}
     });
   };
 
-  [modeInput, bonusScaleInput, bonusDivisorInput, useUnderdogInput].forEach(el => {
+  [modeInput, adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput].forEach(el => {
     el.addEventListener("input", render);
     el.addEventListener("change", render);
   });
