@@ -56,7 +56,6 @@ tr:nth-child(even){background:#121621;}
   const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
   const players = await res.json();
   setInterval(() => location.reload(), 60000);
-  let players = await res.json();
 
   players = players.filter(p =>
   isAUorNZ(p.nationality)
@@ -166,9 +165,9 @@ tr:nth-child(even){background:#121621;}
       `<td>${tier}${grade}</td>` +
       `<td>${p.athlete}</td>` +
       `<td>${p.club}</td>` +
-      `<td>${p.rating.toFixed(1)}</td>` +
-      `<td>${p.skill.toFixed(2)}</td>` +
-      `<td>${p.sigma.toFixed(1)}</td>` +
+      `<td>$(p.rating ?? 0).toFixed(1)}</td>` +
+      `<td>$(p.skill ?? 0).toFixed(2)}</td>` +
+      `<td>$(p.sigma ?? 0).toFixed(1)}</td>` +
       `<td>${(winProb(p.skill)*100).toFixed(1)}%</td>`;
 
     tbody.appendChild(tr);
