@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>AU-NZ Longsword – Optimistic Local Seeding Model</title>
+<title>AU-NZ Longsword – Improved Local Rating</title>
 
 <style>
 body{font-family:Arial;background:#0f1115;color:#e6e6e6;margin:20px;}
@@ -19,12 +19,12 @@ tr:nth-child(even){background:#121621;}
 
 <body>
 
-<h2>AU-NZ Longsword – Optimistic Local Seeding Model</h2>
+<h2>AU-NZ Longsword – Improved Local Rating</h2>
   
 <h3>How to read this table</h3>
 <ul>
   <li>Ranks AU/NZ longsword fencers for local seeding and near-term match prediction, rather than published global rating alone.</li>
-  <li>Supports both raw Glicko-2 ranking and an optimistic local adjustment that gives controlled upside to higher-uncertainty ratings.</li>
+  <li>Supports both the raw HEMA Rating and an improved local rating that gives controlled upside to higher-uncertainty ratings.</li>
   <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
   <li>Uses a diminishing-returns bonus based on RD, with tunable strength and scale, so uncertainty can raise a fencer’s local seeding estimate without letting sparse data dominate the table.</li>
   <li>Optionally applies an underdog factor so lower-rated improvers get a little more upside than already-established top players.</li>
@@ -38,8 +38,8 @@ tr:nth-child(even){background:#121621;}
   <label>
     Mode
     <select id="mode">
-      <option value="optimistic" selected>Optimistic local seeding</option>
-      <option value="raw">Raw Glicko-2</option>
+      <option value="optimistic" selected>Improved local rating</option>
+      <option value="raw">Raw HEMA Rating</option>
     </select>
   </label>
   <label>
@@ -56,7 +56,7 @@ tr:nth-child(even){background:#121621;}
   </label>
 </div>
 <div class="hint">
-  Raw Glicko-2 uses published rating only. Optimistic local seeding adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.
+  Raw HEMA Rating uses published rating only. Improved local rating adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.
 </div>
 
 <table>
