@@ -47,8 +47,6 @@ tr:nth-child(even){background:#121621;}
   const isAUorNZ = (t) => {
     t = (t || "").toLowerCase();
     return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
-
-
   };
   // ======================
   // FETCH TABLE
@@ -58,8 +56,14 @@ tr:nth-child(even){background:#121621;}
  
 
   players = players.filter(p =>
-  isAUorNZ(p.nationality)
+    isAUorNZ(p.nationality)
   );
+
+  if (!players.length) {
+    document.getElementById("b").innerHTML =
+      `<tr><td colspan="8">No AU/NZ players found.</td></tr>`;
+    return;
+  }
   
   setInterval(() => location.reload(), 60000);
   
@@ -90,7 +94,7 @@ tr:nth-child(even){background:#121621;}
   // ======================
   // SORT BY SKILL
   // ======================
-  const sorted = enriched.slice().sort((a,b)=>b.skill-a.skill);
+  const sorted = enriched.slice().sort((a,b)=>b.skill-a.skill).slice(0, TOP_N);
 
   // ======================
   // QUANTILE TIERING
@@ -120,6 +124,7 @@ tr:nth-child(even){background:#121621;}
   const gradeMap = new Map();
 
   tiers.forEach(tier => {
+    if (!tier.length) return;
 
     const min = Math.min(...tier.map(p=>p.skill));
     const max = Math.max(...tier.map(p=>p.skill));
@@ -167,9 +172,9 @@ tr:nth-child(even){background:#121621;}
       `<td>${tier}${grade}</td>` +
       `<td>${p.athlete}</td>` +
       `<td>${p.club}</td>` +
-      `<td>$(p.rating ?? 0).toFixed(1)}</td>` +
-      `<td>$(p.skill ?? 0).toFixed(2)}</td>` +
-      `<td>$(p.sigma ?? 0).toFixed(1)}</td>` +
+      `<td>${(p.rating ?? 0).toFixed(1)}</td>` +
+      `<td>${(p.skill ?? 0).toFixed(2)}</td>` +
+      `<td>${(p.sigma ?? 0).toFixed(1)}</td>` +
       `<td>${(winProb(p.skill)*100).toFixed(1)}%</td>`;
 
     tbody.appendChild(tr);
