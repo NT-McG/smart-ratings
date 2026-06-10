@@ -20,10 +20,11 @@ tr:nth-child(even){background:#121621;}
 <h3>How to read this table</h3>
 <ul>
   <li>Ranks AU/NZ longsword fencers by estimated competitive strength, rather than published rating alone.</li>
-  <li>Applies a Bayesian-style adjustment that pulls low-confidence ratings toward the population mean, producing a more stable estimate of underlying ability.</li>
+  <li>Applies a Bayesian-style adjustment that pulls higher-uncertainty ratings toward the population mean, while preserving more of a fencer’s own rating when their Glicko-style deviation is low.</li>
+  <li>Interprets the source dataset’s confidence value as a Glicko-style uncertainty measure, where lower values mean higher trust and higher values mean less certainty.</li>
   <li>Groups athletes into quantile-based tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
-  <li>Shows uncertainty (σ) to indicate how reliable each estimate is, where lower values mean greater confidence.</li>
+  <li>Shows uncertainty (σ) as a derived display value, where lower values indicate a more reliable estimate.</li>
   <li>Includes Win % as the expected result against the dataset’s average-strength fencer, providing a simple baseline for competitive advantage.</li>
 </ul>
 <table>
@@ -93,7 +94,7 @@ tr:nth-child(even){background:#121621;}
   const muRating = players.reduce((a,b)=>a+b.rating,0)/players.length;
 
   const enriched = players.map(p => {
-    const cScale = p.confidence / (p.confidence + K);
+    const cScale = K / (p.confidence + K);
     const skill = muRating + (p.rating - muRating) * cScale;
     const sigma = 120 * (1 - cScale) + 20;
 
