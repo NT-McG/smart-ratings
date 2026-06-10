@@ -36,26 +36,18 @@ tr:nth-child(even){background:#121621;}
 
 <script>
 
-(() => {
+(async () => {
 
   const K = 40;
   const TOP_N = 150;
   const BASE_TIERS = 6;
-
-  // ======================
-  // FILTER
-  // ======================
-  const isAUorNZ = (t) => {
-    t = (t || "").toLowerCase();
-    return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
-  };
-  
+ 
   // ======================
   // FETCH TABLE
   // ======================
   const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
   const players = await res.json();
-  setInterval(loadData, 60000);
+  setInterval(() => location.reload(), 60000);
   
   // ======================
   // BAYESIAN SKILL MODEL
