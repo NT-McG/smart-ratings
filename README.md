@@ -1,4 +1,4 @@
-# Smart Ratings: A AU-NZ Longsword – Probabilistic Strength & Seeding Model using HEMA Ratings Data
+# Smart Ratings: An AU-NZ Longsword – Probabilistic Strength & Seeding Model using HEMA Ratings Data
 
 This dashboard transforms raw HEMA Ratings competition data into a probabilistic performance model designed to estimate *true competitive strength* beyond raw rating values.
 
