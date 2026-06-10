@@ -49,71 +49,13 @@ tr:nth-child(even){background:#121621;}
     t = (t || "").toLowerCase();
     return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
   };
-
-const SOURCE_URL = "https://hemaratings.com/periods/details/?ratingsetid=1";
-
-// 1. fetch HTML (via CORS proxy if needed)
-const res = await fetch(
-  "https://api.allorigins.win/raw?url=" +
-  encodeURIComponent(SOURCE_URL)
-);
-
-const html = await res.text();
-
-// 2. parse HTML into DOM
-const doc = new DOMParser().parseFromString(html, "text/html");
-
-// 3. extract rows from ORIGINAL TABLE
-const rows = [...doc.querySelectorAll("#mainTable tbody tr")];
-
-console.log("rows found in source:", rows.length);
-
-// 4. map exactly as before (UNCHANGED LOGIC)
-let players = rows.map(r => {
-
-  const athlete =
-    r.querySelector("td:nth-child(3)")?.innerText?.trim() || "";
-
-  const nationality =
-    (r.querySelector("td[data-search]")?.dataset.search ||
-     r.querySelector("td:nth-child(4)")?.innerText || "")
-    .toString();
-
-  const club =
-    r.querySelector("td:nth-child(5)")?.innerText?.trim() || "";
-
-  const rating =
-    parseFloat(r.querySelector("td:nth-child(6) span")?.innerText);
-
-  const confText =
-    r.querySelector("i[title*='confidence']")?.getAttribute("title") || "";
-
-  const confidence =
-    parseFloat(confText.match(/\(([\d.]+)\)/)?.[1] || 0);
-
-  return { athlete, nationality, club, rating, confidence };
-
-}).filter(p =>
-  p.athlete &&
-  isAUorNZ(p.nationality) &&
-  !isNaN(p.rating)
-);
-
-// 5. sort + limit (UNCHANGED)
-players = players
-  .sort((a,b)=>b.rating-a.rating)
-  .slice(0, TOP_N);
-
-}).filter(p =>
-  p.athlete &&
-  isAUorNZ(p.nationality) &&
-  !isNaN(p.rating)
-);
-
-// keep unchanged
-players = players
-  .sort((a,b)=>b.rating-a.rating)
-  .slice(0, TOP_N);
+  
+  // ======================
+  // FETCH TABLE
+  // ======================
+  const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
+  const players = await res.json();
+  
   // ======================
   // BAYESIAN SKILL MODEL
   // ======================
