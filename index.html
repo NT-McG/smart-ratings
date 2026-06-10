@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Tournament Intelligence Dashboard (AU/NZ)</title>
+
+<style>
+body{font-family:Arial;background:#0f1115;color:#e6e6e6;margin:20px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th,td{border:1px solid #2a2f3a;padding:6px;}
+th{background:#1f2633;}
+tr:nth-child(even){background:#121621;}
+</style>
+</head>
+
+<body>
+
+<h2>Tournament Intelligence Dashboard (AU/NZ)</h2>
+
+<table>
+<thead>
+<tr>
+<th>Rank</th>
+<th>Tier</th>
+<th>Athlete</th>
+<th>Club</th>
+<th>Rating</th>
+<th>Skill</th>
+<th>Uncertainty</th>
+<th>Win %</th>
+</tr>
+</thead>
+
+<tbody id="b"></tbody>
+</table>
+
+<script>
+
+(() => {
+
+  const K = 40;
+  const TOP_N = 150;
+  const BASE_TIERS = 6;
+
+  // ======================
+  // FILTER
+  // ======================
+  const isAUorNZ = (t) => {
+    t = (t || "").toLowerCase();
+    return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
+  };
+
+  // ======================
+  // EXTRACT DATA (FROM PAGE SOURCE TABLE)
+  // ======================
+  const rows = [...document.querySelectorAll("#mainTable tbody tr")];
+
+  let players = rows.map(r => {
+
+    const athlete = r.querySelector("td:nth-child(3)")?.innerText?.trim() || "";
+
+    const nationality =
+      (r.querySelector("td[data-search]")?.dataset.search ||
+       r.querySelector("td:nth-child(4)")?.innerText || "")
+      .toString();
+
+    const club = r.querySelector("td:nth-child(5)")?.innerText?.trim() || "";
+
+    const rating = parseFloat(r.querySelector("td:nth-child(6) span")?.innerText);
+
+    const confText =
+      r.querySelector("i[title*='confidence']")?.getAttribute("title") || "";
+
+    const confidence =
+      parseFloat(confText.match(/\(([\d.]+)\)/)?.[1] || 0);
+
+    return { athlete, nationality, club, rating, confidence };
+
+  }).filter(p =>
+    p.athlete && isAUorNZ(p.nationality) && !isNaN(p.rating)
+  );
+
+  players = players
+    .sort((a,b)=>b.rating-a.rating)
+    .slice(0, TOP_N);
+
+  // ======================
+  // BAYESIAN SKILL MODEL
+  // ======================
+  const muRating = players.reduce((a,b)=>a+b.rating,0)/players.length;
+
+  const enriched = players.map(p => {
+
+    const cScale = p.confidence / (p.confidence + K);
+
+    const skill = muRating + (p.rating - muRating) * cScale;
+
+    const sigma = 120 * (1 - cScale) + 20;
+
+    return { ...p, skill, sigma };
+  });
+
+  // ======================
+  // WIN PROBABILITY
+  // ======================
+  const muSkill = enriched.reduce((a,b)=>a+b.skill,0)/enriched.length;
+
+  const winProb = (s) =>
+    1 / (1 + Math.pow(10, (muSkill - s) / 400));
+
+  // ======================
+  // SORT BY SKILL
+  // ======================
+  const sorted = enriched.slice().sort((a,b)=>b.skill-a.skill);
+
+  // ======================
+  // QUANTILE TIERING
+  // ======================
+  const tiers = Array.from({ length: BASE_TIERS }, () => []);
+
+  sorted.forEach((p, i) => {
+    const idx = Math.min(
+      BASE_TIERS - 1,
+      Math.floor((i / sorted.length) * BASE_TIERS)
+    );
+    tiers[idx].push(p);
+  });
+
+  // ======================
+  // TIER LABELS
+  // ======================
+  const tierMap = new Map();
+
+  tiers.forEach((t,i)=>
+    t.forEach(p=>tierMap.set(p.athlete,"Tier "+(i+1)))
+  );
+
+  // ======================
+  // WITHIN-TIER GRADING (+ / -)
+  // ======================
+  const gradeMap = new Map();
+
+  tiers.forEach(tier => {
+
+    const min = Math.min(...tier.map(p=>p.skill));
+    const max = Math.max(...tier.map(p=>p.skill));
+
+    tier.forEach(p => {
+
+      const z = (p.skill - min) / ((max - min) || 1);
+
+      let g = "";
+      if (z > 0.66) g = "+";
+      else if (z < 0.33) g = "-";
+
+      gradeMap.set(p.athlete, g);
+    });
+
+  });
+
+  // ======================
+  // HEATMAP
+  // ======================
+  const vals = enriched.map(d=>d.skill);
+  const minS = Math.min(...vals);
+  const maxS = Math.max(...vals);
+
+  const heat = (v) => {
+    const t = (v - minS) / ((maxS - minS) || 1);
+    return `rgba(${255*(1-t)|0},${200*t|0},120,0.25)`;
+  };
+
+  // ======================
+  // RENDER
+  // ======================
+  const tbody = document.getElementById("b");
+
+  sorted.forEach((p,i)=>{
+
+    const tier = tierMap.get(p.athlete);
+    const grade = gradeMap.get(p.athlete);
+
+    const tr = document.createElement("tr");
+    tr.style.background = heat(p.skill);
+
+    tr.innerHTML =
+      `<td>${i+1}</td>` +
+      `<td>${tier}${grade}</td>` +
+      `<td>${p.athlete}</td>` +
+      `<td>${p.club}</td>` +
+      `<td>${p.rating.toFixed(1)}</td>` +
+      `<td>${p.skill.toFixed(2)}</td>` +
+      `<td>${p.sigma.toFixed(1)}</td>` +
+      `<td>${(winProb(p.skill)*100).toFixed(1)}%</td>`;
+
+    tbody.appendChild(tr);
+  });
+
+})();
+
+</script>
+
+</body>
+</html>
