@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>AU-NZ Longsword – Probabilistic Strength & Seeding Model </title>
+<title>AU-NZ Longsword – Optimistic Local Seeding Model</title>
 
 <style>
 body{font-family:Arial;background:#0f1115;color:#e6e6e6;margin:20px;}
@@ -15,16 +15,17 @@ tr:nth-child(even){background:#121621;}
 
 <body>
 
-<h2>AU-NZ Longsword – Probabilistic Strength & Seeding Model</h2>
+<h2>AU-NZ Longsword – Optimistic Local Seeding Model</h2>
   
 <h3>How to read this table</h3>
 <ul>
-  <li>Ranks AU/NZ longsword fencers by estimated competitive strength, rather than published rating alone.</li>
-  <li>Applies a Bayesian-style adjustment that pulls higher-uncertainty ratings toward the population mean, while preserving more of a fencer’s own rating when their Glicko-style deviation is low.</li>
-  <li>Interprets the source dataset’s confidence value as a Glicko-style uncertainty measure, where lower values mean higher trust and higher values mean less certainty.</li>
+  <li>Ranks AU/NZ longsword fencers for local seeding and near-term match prediction, rather than published global rating alone.</li>
+  <li>Applies an optimistic local adjustment that gives controlled upside to higher-uncertainty Glicko-2 ratings, helping surface improving or under-observed competitors in a fast-changing regional scene.</li>
+  <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
+  <li>Uses a diminishing-returns bonus based on RD, so uncertainty can raise a fencer’s local seeding estimate without letting sparse data dominate the table.</li>
   <li>Groups athletes into quantile-based tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
-  <li>Shows uncertainty (σ) as a derived display value, where lower values indicate a more reliable estimate.</li>
+  <li>Shows uncertainty (σ) using the underlying Glicko-style deviation, where lower values indicate a more reliable estimate.</li>
   <li>Includes Win % as the expected result against the dataset’s average-strength fencer, providing a simple baseline for competitive advantage.</li>
 </ul>
 <table>
@@ -48,9 +49,10 @@ tr:nth-child(even){background:#121621;}
 
 (async () => {
 
-  const K = 40;
   const TOP_N = 150;
   const BASE_TIERS = 6;
+  const BONUS_SCALE = 35;
+  const BONUS_DIVISOR = 60;
   const tbody = document.getElementById("b");
 
   // ======================
@@ -89,14 +91,13 @@ tr:nth-child(even){background:#121621;}
   setInterval(() => location.reload(), 60000);
   
   // ======================
-  // BAYESIAN SKILL MODEL
+  // OPTIMISTIC LOCAL SEEDING MODEL
   // ======================
-  const muRating = players.reduce((a,b)=>a+b.rating,0)/players.length;
-
   const enriched = players.map(p => {
-    const cScale = K / (p.confidence + K);
-    const skill = muRating + (p.rating - muRating) * cScale;
-    const sigma = 120 * (1 - cScale) + 20;
+    const rd = p.confidence || 0;
+    const bonus = BONUS_SCALE * Math.log1p(rd / BONUS_DIVISOR);
+    const skill = p.rating + bonus;
+    const sigma = rd;
 
     return { ...p, skill, sigma };
   });
