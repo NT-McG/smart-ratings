@@ -17,6 +17,7 @@ tr:nth-child(even){background:#121621;}
 .positive{color:#7ee787;font-weight:600;}
 .negative{color:#ff7b72;font-weight:600;}
 .neutral{color:#aeb7c6;}
+.help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #4b5565;color:#aeb7c6;font-size:11px;cursor:help;line-height:1;vertical-align:middle;margin-left:4px;}
 </style>
 </head>
 
@@ -36,7 +37,7 @@ tr:nth-child(even){background:#121621;}
   <li><strong>Strength</strong> controls how much the selected uncertainty adjustment matters overall.</li>
   <li><strong>Scale</strong> controls how quickly the optimistic uncertainty bonus ramps up.</li>
   <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
-  <li><strong>Pairwise Win %</strong> estimates the chance of beating a synthetic median-reference fencer, using both displayed skill and both sides’ uncertainty.</li>
+  <li><strong>Vs Median</strong> estimates the chance of beating a synthetic reference fencer built from the selected comparison pool, using both displayed skill and both sides’ uncertainty.</li>
   <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
@@ -65,9 +66,18 @@ tr:nth-child(even){background:#121621;}
     <input id="useUnderdog" type="checkbox" />
     Underdog boost (optimistic only)
   </label>
+  <label>
+    Reference
+    <select id="referenceMode">
+      <option value="median" selected>Median field</option>
+      <option value="mean">Mean field</option>
+      <option value="top16">Top 16</option>
+      <option value="top1">#1 fencer</option>
+    </select>
+  </label>
 </div>
 <div class="hint" id="modeHint">
-  Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.
+  Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Vs Median estimates performance against the selected reference pool using both skill and uncertainty.
 </div>
 
 <table>
@@ -81,7 +91,7 @@ tr:nth-child(even){background:#121621;}
 <th>Change</th>
 <th>Skill</th>
 <th>Uncertainty</th>
-<th id="winPctHeader">Pairwise Win %</th>
+<th id="winPctHeader" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">Vs Median <span class="help" aria-hidden="true">?</span></th>
 </tr>
 </thead>
 
@@ -100,6 +110,7 @@ tr:nth-child(even){background:#121621;}
   const adjustmentStrengthInput = document.getElementById("adjustmentStrength");
   const bonusDivisorInput = document.getElementById("bonusDivisor");
   const useUnderdogInput = document.getElementById("useUnderdog");
+  const referenceModeInput = document.getElementById("referenceMode");
   const modeHint = document.getElementById("modeHint");
   const winPctHeader = document.getElementById("winPctHeader");
 
@@ -124,6 +135,11 @@ tr:nth-child(even){background:#121621;}
       : (sorted[mid - 1] + sorted[mid]) / 2;
   };
 
+  const mean = (values) => {
+    if (!values.length) return 0;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  };
+
   const normalCdf = (x) => {
     const sign = x < 0 ? -1 : 1;
     const absX = Math.abs(x) / Math.sqrt(2);
@@ -137,23 +153,69 @@ tr:nth-child(even){background:#121621;}
     return 0.5 * (1 + sign * erf);
   };
 
-  const getModeHint = (mode) => {
+  const getReferenceLabel = (referenceMode) => {
+    if (referenceMode === "mean") return "Vs Mean";
+    if (referenceMode === "top16") return "Vs Top 16";
+    if (referenceMode === "top1") return "Vs #1";
+    return "Vs Median";
+  };
+
+  const getModeHint = (mode, referenceMode) => {
+    const referenceText = `${getReferenceLabel(referenceMode)} estimates performance against the selected reference pool using both skill and uncertainty.`;
+
     if (mode === "raw") {
-      return "Raw mode uses published HEMA Rating only, with no uncertainty adjustment. Pairwise Win % estimates performance against a synthetic median-reference fencer using both sides’ uncertainty.";
+      return `Raw mode uses published HEMA Rating only, with no uncertainty adjustment. ${referenceText}`;
     }
     if (mode === "conservative") {
-      return "Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. Pairwise Win % still accounts for both fencers’ uncertainty.";
+      return `Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. ${referenceText}`;
     }
     if (mode === "balanced") {
-      return "Balanced mode shrinks uncertain ratings toward the local median using a smooth RD-based weight. Pairwise Win % estimates performance against a synthetic median-reference fencer using both displayed skill and uncertainty.";
+      return `Balanced mode shrinks uncertain ratings toward the local median using a smooth RD-based weight. ${referenceText}`;
     }
-    return "Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Pairwise Win % estimates performance against a synthetic median-reference fencer using both sides’ uncertainty.";
+    return `Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. ${referenceText}`;
   };
 
   const formatChange = (value) => {
     if (Math.abs(value) < 0.05) return `<span class="neutral">0.0</span>`;
     if (value > 0) return `<span class="positive">+${value.toFixed(1)}</span>`;
     return `<span class="negative">${value.toFixed(1)}</span>`;
+  };
+
+  const buildReference = (referenceMode, enriched) => {
+    const skills = enriched.map(p => p.skill);
+    const rds = enriched.map(p => p.sigma);
+
+    if (referenceMode === "mean") {
+      return {
+        label: "Vs Mean",
+        skill: mean(skills),
+        rd: Math.max(1, mean(rds))
+      };
+    }
+
+    if (referenceMode === "top16") {
+      const top = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, Math.min(16, enriched.length));
+      return {
+        label: "Vs Top 16",
+        skill: mean(top.map(p => p.skill)),
+        rd: Math.max(1, mean(top.map(p => p.sigma)))
+      };
+    }
+
+    if (referenceMode === "top1") {
+      const top = enriched.slice().sort((a, b) => b.skill - a.skill)[0];
+      return {
+        label: "Vs #1",
+        skill: top?.skill ?? 0,
+        rd: Math.max(1, top?.sigma ?? 1)
+      };
+    }
+
+    return {
+      label: "Vs Median",
+      skill: median(skills),
+      rd: Math.max(1, median(rds))
+    };
   };
 
   // ======================
@@ -190,19 +252,18 @@ tr:nth-child(even){background:#121621;}
   }
   
   const ratingValues = players.map(p => p.rating || 0);
-  const meanRating = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
+  const meanRating = mean(ratingValues);
   const medianRating = median(ratingValues);
-  const medianRd = median(players.map(p => p.confidence || 0));
 
   const render = () => {
     const mode = modeInput.value;
+    const referenceMode = referenceModeInput.value;
     const adjustmentStrength = Math.max(0, Number(adjustmentStrengthInput.value) || 0);
     const bonusDivisor = Math.max(1, Number(bonusDivisorInput.value) || 1);
     const useUnderdog = useUnderdogInput.checked;
 
-    modeHint.textContent = getModeHint(mode);
+    modeHint.textContent = getModeHint(mode, referenceMode);
     useUnderdogInput.disabled = mode !== "optimistic";
-    winPctHeader.textContent = "Pairwise Win %";
 
     // ======================
     // SKILL MODEL
@@ -235,15 +296,16 @@ tr:nth-child(even){background:#121621;}
       return { ...p, skill, sigma, change };
     });
 
-    const referenceSkill = median(enriched.map(p => p.skill));
-    const referenceRd = Math.max(1, medianRd);
+    const reference = buildReference(referenceMode, enriched);
+    winPctHeader.innerHTML = `${reference.label} <span class="help" aria-hidden="true" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">?</span>`;
+    winPctHeader.title = `Chance of beating the selected ${reference.label.replace("Vs ", "").toLowerCase()} reference opponent, using displayed skill and combined uncertainty.`;
 
     // ======================
     // PAIRWISE WIN PROBABILITY
     // ======================
     const winProb = (skill, rd) => {
-      const combinedRd = Math.sqrt((rd * rd) + (referenceRd * referenceRd));
-      const z = (skill - referenceSkill) / Math.max(1, combinedRd);
+      const combinedRd = Math.sqrt((rd * rd) + (reference.rd * reference.rd));
+      const z = (skill - reference.skill) / Math.max(1, combinedRd);
       return normalCdf(z);
     };
 
@@ -335,7 +397,7 @@ tr:nth-child(even){background:#121621;}
     });
   };
 
-  [modeInput, adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput].forEach(el => {
+  [modeInput, adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput, referenceModeInput].forEach(el => {
     el.addEventListener("input", render);
     el.addEventListener("change", render);
   });
