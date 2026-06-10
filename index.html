@@ -36,11 +36,11 @@ tr:nth-child(even){background:#121621;}
   <li><strong>Strength</strong> controls how much the selected uncertainty adjustment matters overall.</li>
   <li><strong>Scale</strong> controls how quickly the optimistic uncertainty bonus ramps up.</li>
   <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
+  <li><strong>Pairwise Win %</strong> estimates the chance of beating a synthetic median-reference fencer, using both displayed skill and both sides’ uncertainty.</li>
   <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
   <li>Shows uncertainty (σ) using the underlying Glicko-style deviation, where lower values indicate a more reliable estimate.</li>
-  <li>Includes Win % as the expected result against the dataset’s average-strength fencer, providing a simple baseline for competitive advantage.</li>
 </ul>
 
 <div class="controls">
@@ -81,7 +81,7 @@ tr:nth-child(even){background:#121621;}
 <th>Change</th>
 <th>Skill</th>
 <th>Uncertainty</th>
-<th id="winPctHeader">Win %</th>
+<th id="winPctHeader">Pairwise Win %</th>
 </tr>
 </thead>
 
@@ -124,17 +124,30 @@ tr:nth-child(even){background:#121621;}
       : (sorted[mid - 1] + sorted[mid]) / 2;
   };
 
+  const normalCdf = (x) => {
+    const sign = x < 0 ? -1 : 1;
+    const absX = Math.abs(x) / Math.sqrt(2);
+    const t = 1 / (1 + 0.3275911 * absX);
+    const a1 = 0.254829592;
+    const a2 = -0.284496736;
+    const a3 = 1.421413741;
+    const a4 = -1.453152027;
+    const a5 = 1.061405429;
+    const erf = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+    return 0.5 * (1 + sign * erf);
+  };
+
   const getModeHint = (mode) => {
     if (mode === "raw") {
-      return "Raw mode uses published HEMA Rating only, with no uncertainty adjustment.";
+      return "Raw mode uses published HEMA Rating only, with no uncertainty adjustment. Pairwise Win % estimates performance against a synthetic median-reference fencer using both sides’ uncertainty.";
     }
     if (mode === "conservative") {
-      return "Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding.";
+      return "Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. Pairwise Win % still accounts for both fencers’ uncertainty.";
     }
     if (mode === "balanced") {
-      return "Balanced mode shrinks uncertain ratings toward the local median using a smooth RD-based weight; Win % is calculated against the original field mean so it remains meaningful.";
+      return "Balanced mode shrinks uncertain ratings toward the local median using a smooth RD-based weight. Pairwise Win % estimates performance against a synthetic median-reference fencer using both displayed skill and uncertainty.";
     }
-    return "Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers.";
+    return "Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Pairwise Win % estimates performance against a synthetic median-reference fencer using both sides’ uncertainty.";
   };
 
   const formatChange = (value) => {
@@ -179,6 +192,7 @@ tr:nth-child(even){background:#121621;}
   const ratingValues = players.map(p => p.rating || 0);
   const meanRating = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
   const medianRating = median(ratingValues);
+  const medianRd = median(players.map(p => p.confidence || 0));
 
   const render = () => {
     const mode = modeInput.value;
@@ -188,7 +202,7 @@ tr:nth-child(even){background:#121621;}
 
     modeHint.textContent = getModeHint(mode);
     useUnderdogInput.disabled = mode !== "optimistic";
-    winPctHeader.textContent = "Win %";
+    winPctHeader.textContent = "Pairwise Win %";
 
     // ======================
     // SKILL MODEL
@@ -221,13 +235,17 @@ tr:nth-child(even){background:#121621;}
       return { ...p, skill, sigma, change };
     });
 
-    // ======================
-    // WIN PROBABILITY
-    // ======================
-    const baselineSkill = mode === "balanced" ? meanRating : enriched.reduce((a,b)=>a+b.skill,0)/enriched.length;
+    const referenceSkill = median(enriched.map(p => p.skill));
+    const referenceRd = Math.max(1, medianRd);
 
-    const winProb = (s) =>
-      1 / (1 + Math.pow(10, (baselineSkill - s) / 400));
+    // ======================
+    // PAIRWISE WIN PROBABILITY
+    // ======================
+    const winProb = (skill, rd) => {
+      const combinedRd = Math.sqrt((rd * rd) + (referenceRd * referenceRd));
+      const z = (skill - referenceSkill) / Math.max(1, combinedRd);
+      return normalCdf(z);
+    };
 
     // ======================
     // SORT BY SKILL
@@ -311,7 +329,7 @@ tr:nth-child(even){background:#121621;}
         `<td>${formatChange(p.change ?? 0)}</td>` +
         `<td>${(p.skill ?? 0).toFixed(2)}</td>` +
         `<td>${(p.sigma ?? 0).toFixed(1)}</td>` +
-        `<td>${(winProb(p.skill)*100).toFixed(1)}%</td>`;
+        `<td>${(winProb(p.skill, p.sigma)*100).toFixed(1)}%</td>`;
 
       tbody.appendChild(tr);
     });
