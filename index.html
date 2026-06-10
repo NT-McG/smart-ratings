@@ -51,39 +51,59 @@ tr:nth-child(even){background:#121621;}
   };
 
   // ======================
-  // EXTRACT DATA (FROM PAGE SOURCE TABLE)
-  // ======================
-  const rows = [...document.querySelectorAll("#mainTable tbody tr")];
+// FETCH + PARSE SOURCE HTML
+// ======================
 
-  let players = rows.map(r => {
+const SOURCE_URL = "PASTE_ORIGINAL_SITE_URL_HERE";
 
-    const athlete = r.querySelector("td:nth-child(3)")?.innerText?.trim() || "";
+const res = await fetch(
+  "https://api.allorigins.win/raw?url=" + encodeURIComponent(SOURCE_URL)
+);
 
-    const nationality =
-      (r.querySelector("td[data-search]")?.dataset.search ||
-       r.querySelector("td:nth-child(4)")?.innerText || "")
-      .toString();
+const html = await res.text();
 
-    const club = r.querySelector("td:nth-child(5)")?.innerText?.trim() || "";
+const doc = new DOMParser().parseFromString(html, "text/html");
 
-    const rating = parseFloat(r.querySelector("td:nth-child(6) span")?.innerText);
+// ======================
+// EXTRACT DATA (same logic, new DOM source)
+// ======================
 
-    const confText =
-      r.querySelector("i[title*='confidence']")?.getAttribute("title") || "";
+const rows = [...doc.querySelectorAll("#mainTable tbody tr")];
 
-    const confidence =
-      parseFloat(confText.match(/\(([\d.]+)\)/)?.[1] || 0);
+let players = rows.map(r => {
 
-    return { athlete, nationality, club, rating, confidence };
+  const athlete =
+    r.querySelector("td:nth-child(3)")?.innerText?.trim() || "";
 
-  }).filter(p =>
-    p.athlete && isAUorNZ(p.nationality) && !isNaN(p.rating)
-  );
+  const nationality =
+    (r.querySelector("td[data-search]")?.dataset.search ||
+     r.querySelector("td:nth-child(4)")?.innerText || "")
+    .toString();
 
-  players = players
-    .sort((a,b)=>b.rating-a.rating)
-    .slice(0, TOP_N);
+  const club =
+    r.querySelector("td:nth-child(5)")?.innerText?.trim() || "";
 
+  const rating =
+    parseFloat(r.querySelector("td:nth-child(6) span")?.innerText);
+
+  const confText =
+    r.querySelector("i[title*='confidence']")?.getAttribute("title") || "";
+
+  const confidence =
+    parseFloat(confText.match(/\(([\d.]+)\)/)?.[1] || 0);
+
+  return { athlete, nationality, club, rating, confidence };
+
+}).filter(p =>
+  p.athlete &&
+  isAUorNZ(p.nationality) &&
+  !isNaN(p.rating)
+);
+
+// keep unchanged
+players = players
+  .sort((a,b)=>b.rating-a.rating)
+  .slice(0, TOP_N);
   // ======================
   // BAYESIAN SKILL MODEL
   // ======================
