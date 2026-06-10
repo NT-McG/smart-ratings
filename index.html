@@ -18,14 +18,14 @@ tr:nth-child(even){background:#121621;}
 <h2>AU-NZ Longsword – Probabilistic Strength & Seeding Model</h2>
   
 <h3>How to read this table</h3>
-<p>
-  This table ranks AU/NZ longsword fencers using an inferred skill score rather than published rating alone.
-  Ratings are adjusted with a probabilistic model that pulls uncertain or low-confidence ratings toward the population mean,
-  producing a more stable estimate of underlying ability. Fencers are grouped into tiers using quantiles, with + / – markers
-  showing relative position within each tier. The heatmap highlights relative strength across the field. Uncertainty (σ)
-  indicates how reliable each estimate is, with lower values meaning more confidence. Win % shows expected performance
-  against the average strength of the full dataset, giving a baseline measure of competitive advantage.
-</p>
+<ul>
+  <li>Ranks AU/NZ longsword fencers by estimated competitive strength, rather than published rating alone.</li>
+  <li>Applies a Bayesian-style adjustment that pulls low-confidence ratings toward the population mean, producing a more stable estimate of underlying ability.</li>
+  <li>Groups athletes into quantile-based tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
+  <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
+  <li>Shows uncertainty (σ) to indicate how reliable each estimate is, where lower values mean greater confidence.</li>
+  <li>Includes Win % as the expected result against the dataset’s average-strength fencer, providing a simple baseline for competitive advantage.</li>
+</ul>
 <table>
 <thead>
 <tr>
