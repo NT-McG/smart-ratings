@@ -55,6 +55,7 @@ tr:nth-child(even){background:#121621;}
   // ======================
   const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
   const players = await res.json();
+  setInterval(loadData, 60000);
   
   // ======================
   // BAYESIAN SKILL MODEL
