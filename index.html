@@ -12,7 +12,9 @@ th{background:#1f2633;}
 tr:nth-child(even){background:#121621;}
 .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:16px 0 20px;}
 .controls label{display:flex;align-items:center;gap:6px;}
-.controls input,.controls select{background:#121621;color:#e6e6e6;border:1px solid #2a2f3a;padding:4px 6px;}
+.controls input,.controls select,.controls button{background:#121621;color:#e6e6e6;border:1px solid #2a2f3a;padding:4px 6px;}
+.controls button{cursor:pointer;}
+.controls button:hover{background:#1a2030;}
 .hint{color:#aeb7c6;font-size:12px;margin-top:-8px;margin-bottom:12px;}
 .positive{color:#7ee787;font-weight:600;}
 .negative{color:#ff7b72;font-weight:600;}
@@ -50,6 +52,7 @@ tr:nth-child(even){background:#121621;}
   <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
   <li><strong>Vs Median</strong> estimates the chance of beating a synthetic reference fencer built from the selected comparison pool, using both displayed skill and both sides’ uncertainty.</li>
   <li><strong>Diagnostics</strong> score the current settings against objective leaderboard stability and local-ranking guardrails.</li>
+  <li><strong>Profile</strong> lets you target either stricter seeding stability or more expressive local-ranking differentiation.</li>
   <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
@@ -57,6 +60,14 @@ tr:nth-child(even){background:#121621;}
 </ul>
 
 <div class="controls">
+  <label>
+    Profile
+    <select id="profileMode">
+      <option value="custom" selected>Custom</option>
+      <option value="seeding">Seeding</option>
+      <option value="local">Local ranking</option>
+    </select>
+  </label>
   <label>
     Mode
     <select id="mode">
@@ -87,6 +98,7 @@ tr:nth-child(even){background:#121621;}
       <option value="top1">#1 fencer</option>
     </select>
   </label>
+  <button id="applyProfileDefaults" type="button">Apply profile defaults</button>
 </div>
 <div class="hint" id="modeHint">
   Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Vs Median estimates performance against the selected reference pool using both skill and uncertainty.
@@ -130,6 +142,23 @@ tr:nth-child(even){background:#121621;}
     balanced: 1.5,
     optimistic: 35
   };
+  const PROFILE_DEFAULTS = {
+    custom: null,
+    seeding: {
+      mode: "balanced",
+      strength: 1.0,
+      scale: 60,
+      useUnderdog: false,
+      referenceMode: "median"
+    },
+    local: {
+      mode: "optimistic",
+      strength: 25,
+      scale: 60,
+      useUnderdog: false,
+      referenceMode: "median"
+    }
+  };
   const SEEDING_THRESHOLDS = {
     spearman: 0.95,
     top8Overlap: 7,
@@ -156,11 +185,13 @@ tr:nth-child(even){background:#121621;}
   };
 
   const tbody = document.getElementById("b");
+  const profileModeInput = document.getElementById("profileMode");
   const modeInput = document.getElementById("mode");
   const adjustmentStrengthInput = document.getElementById("adjustmentStrength");
   const bonusDivisorInput = document.getElementById("bonusDivisor");
   const useUnderdogInput = document.getElementById("useUnderdog");
   const referenceModeInput = document.getElementById("referenceMode");
+  const applyProfileDefaultsButton = document.getElementById("applyProfileDefaults");
   const modeHint = document.getElementById("modeHint");
   const winPctHeader = document.getElementById("winPctHeader");
   const diagnosticsGrid = document.getElementById("diagnosticsGrid");
@@ -267,19 +298,26 @@ tr:nth-child(even){background:#121621;}
     return "Vs Median";
   };
 
-  const getModeHint = (mode, referenceMode) => {
+  const getProfileLabel = (profileMode) => {
+    if (profileMode === "seeding") return "Seeding";
+    if (profileMode === "local") return "Local ranking";
+    return "Custom";
+  };
+
+  const getModeHint = (mode, referenceMode, profileMode) => {
     const referenceText = `${getReferenceLabel(referenceMode)} estimates performance against the selected reference pool using both skill and uncertainty.`;
+    const profileText = `Current profile: ${getProfileLabel(profileMode)}.`;
 
     if (mode === "raw") {
-      return `Raw mode uses published HEMA Rating only, with no uncertainty adjustment. ${referenceText}`;
+      return `Raw mode uses published HEMA Rating only, with no uncertainty adjustment. ${referenceText} ${profileText}`;
     }
     if (mode === "conservative") {
-      return `Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. ${referenceText}`;
+      return `Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. ${referenceText} ${profileText}`;
     }
     if (mode === "balanced") {
-      return `Balanced mode shrinks uncertain ratings toward the local median using a strength-scaled RD penalty. Higher strength now means more shrinkage. ${referenceText}`;
+      return `Balanced mode shrinks uncertain ratings toward the local median using a strength-scaled RD penalty. Higher strength now means more shrinkage. ${referenceText} ${profileText}`;
     }
-    return `Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. ${referenceText}`;
+    return `Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. ${referenceText} ${profileText}`;
   };
 
   const formatChange = (value) => {
@@ -315,11 +353,27 @@ tr:nth-child(even){background:#121621;}
     adjustmentStrengthInput.value = String(defaultStrength);
   };
 
+  const applyProfileDefaults = (profileMode) => {
+    const defaults = PROFILE_DEFAULTS[profileMode];
+    if (!defaults) return;
+    modeInput.value = defaults.mode;
+    adjustmentStrengthInput.value = String(defaults.strength);
+    bonusDivisorInput.value = String(defaults.scale);
+    useUnderdogInput.checked = defaults.useUnderdog;
+    referenceModeInput.value = defaults.referenceMode;
+  };
+
+  const markProfileCustom = () => {
+    if (profileModeInput.value !== "custom") {
+      profileModeInput.value = "custom";
+    }
+  };
+
   const metricRow = (name, value) => `<div class="metric"><span class="metric-name">${name}</span><span>${value}</span></div>`;
   const badge = (label, ok) => `<span class="badge ${ok ? "pass" : "fail"}">${label}: ${ok ? "PASS" : "FAIL"}</span>`;
   const neutralBadge = (label, value) => `<span class="badge neutral">${label}: ${value}</span>`;
 
-  const renderDiagnostics = (metrics, mode) => {
+  const renderDiagnostics = (metrics, mode, profileMode) => {
     diagnosticsGrid.innerHTML = [
       metricRow("Spearman ρ", metrics.spearman.toFixed(3)),
       metricRow("Top 8 overlap", `${metrics.top8Overlap}/8`),
@@ -372,6 +426,7 @@ tr:nth-child(even){background:#121621;}
     profileSummary.innerHTML = [
       badge("Seeding profile", seedingPass),
       badge("Local ranking profile", localPass),
+      neutralBadge("Selected profile", getProfileLabel(profileMode)),
       neutralBadge("Mode", mode),
       neutralBadge("RD guardrail", corrBadgeLabel)
     ].join("");
@@ -453,13 +508,14 @@ tr:nth-child(even){background:#121621;}
   const rawSorted = players.slice().sort((a, b) => (b.rating || 0) - (a.rating || 0));
 
   const render = () => {
+    const profileMode = profileModeInput.value;
     const mode = modeInput.value;
     const referenceMode = referenceModeInput.value;
     const adjustmentStrength = Math.max(0, Number(adjustmentStrengthInput.value) || 0);
     const bonusDivisor = Math.max(1, Number(bonusDivisorInput.value) || 1);
     const useUnderdog = useUnderdogInput.checked;
 
-    modeHint.textContent = getModeHint(mode, referenceMode);
+    modeHint.textContent = getModeHint(mode, referenceMode, profileMode);
     useUnderdogInput.disabled = mode !== "optimistic";
 
     const enriched = players.map(p => {
@@ -497,9 +553,10 @@ tr:nth-child(even){background:#121621;}
       return normalCdf(z);
     };
 
-    const sorted = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, TOP_N);
-    const metrics = computeMetrics(players, enriched, rawSorted, enriched.slice().sort((a, b) => b.skill - a.skill));
-    renderDiagnostics(metrics, mode);
+    const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+    const sorted = fullSorted.slice(0, TOP_N);
+    const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
+    renderDiagnostics(metrics, mode, profileMode);
 
     const tiers = Array.from({ length: BASE_TIERS }, () => []);
     sorted.forEach((p, i) => {
@@ -552,14 +609,29 @@ tr:nth-child(even){background:#121621;}
     });
   };
 
+  profileModeInput.addEventListener("change", render);
+
+  applyProfileDefaultsButton.addEventListener("click", () => {
+    applyProfileDefaults(profileModeInput.value);
+    render();
+  });
+
   modeInput.addEventListener("change", () => {
-    applyModeDefaults(modeInput.value);
+    if (profileModeInput.value === "custom") {
+      applyModeDefaults(modeInput.value);
+    }
     render();
   });
 
   [adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput, referenceModeInput].forEach(el => {
-    el.addEventListener("input", render);
-    el.addEventListener("change", render);
+    el.addEventListener("input", () => {
+      markProfileCustom();
+      render();
+    });
+    el.addEventListener("change", () => {
+      markProfileCustom();
+      render();
+    });
   });
 
   applyModeDefaults(modeInput.value);
