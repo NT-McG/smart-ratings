@@ -112,7 +112,7 @@ tr:nth-child(even){background:#121621;}
   <div class="diagnostics-grid" id="diagnosticsGrid"></div>
   <div class="profile-summary" id="profileSummary"></div>
   <div class="status" id="autoTuneStatus">Auto-tune status: idle.</div>
-  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile now requires some visible movement while still limiting RD-driven distortion and protecting top seeds.</div>
+  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile now aims to produce a credible alternative ordering rather than a near-copy of the raw leaderboard.</div>
 </div>
 
 <table>
@@ -174,23 +174,23 @@ tr:nth-child(even){background:#121621;}
     top16PairRetention: 0.85
   };
   const LOCAL_THRESHOLDS = {
-    spearmanMin: 0.8,
-    spearmanMax: 0.97,
+    spearmanMin: 0.82,
+    spearmanMax: 0.985,
     top8Overlap: 5,
-    top16Overlap: 10,
-    avgTop8ShiftMax: 6.0,
-    avgTop8ShiftMin: 1.25,
-    p90AbsChangeMin: 18,
-    p90AbsChangeMax: 60,
-    maxAbsChange: 90,
+    top16Overlap: 9,
+    avgTop8ShiftMax: 6.5,
+    avgTop8ShiftMin: 0.75,
+    p90AbsChangeMin: 12,
+    p90AbsChangeMax: 70,
+    maxAbsChange: 100,
     highRdEntrantsTop16: 4,
-    spreadMin: 1.02,
-    spreadMax: 1.5,
-    optimisticCorrMin: 0.2,
-    optimisticCorrMax: 0.8,
-    balancedCorrAbsMax: 0.5,
-    medianRankShiftMin: 3,
-    top16PairRetentionMin: 0.65
+    spreadMin: 1.01,
+    spreadMax: 1.55,
+    optimisticCorrMin: 0.15,
+    optimisticCorrMax: 0.85,
+    balancedCorrAbsMax: 0.6,
+    medianRankShiftMin: 2,
+    top16PairRetentionMin: 0.55
   };
 
   const tbody = document.getElementById("b");
@@ -445,9 +445,9 @@ tr:nth-child(even){background:#121621;}
       const corrTarget = mode === "optimistic" ? 0.5 : 0;
       const corrPenalty = Math.abs(metrics.rdChangeCorr - corrTarget) * 140;
       const movementReward = Math.min(metrics.medianAbsRankShift, 8) * 180 + Math.min(metrics.avgTop8Shift, 6) * 80;
-      const underMovementPenalty = Math.max(0, 3 - metrics.medianAbsRankShift) * 300 + Math.max(0, 18 - metrics.p90AbsChange) * 20;
-      const overMovementPenalty = Math.max(0, metrics.avgTop8Shift - 6) * 120 + Math.max(0, metrics.maxAbsChange - 90) * 8;
-      const orderCompressionPenalty = Math.max(0, metrics.spearman - 0.96) * 4000;
+      const underMovementPenalty = Math.max(0, 2 - metrics.medianAbsRankShift) * 220 + Math.max(0, 12 - metrics.p90AbsChange) * 16;
+      const overMovementPenalty = Math.max(0, metrics.avgTop8Shift - 6.5) * 100 + Math.max(0, metrics.maxAbsChange - 100) * 6;
+      const orderCompressionPenalty = Math.max(0, metrics.spearman - 0.975) * 3000;
       return passBonus +
         metrics.top16Overlap * 90 +
         metrics.top8Overlap * 40 +
