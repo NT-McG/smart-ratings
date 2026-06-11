@@ -136,704 +136,852 @@ tr:nth-child(even){background:#121621;}
 <script>
 
 (async () => {
-
-  const TOP_N = 150;
-  const BASE_TIERS = 6;
-  const BASE_TIER_LABELS = ["S", "A", "B", "C", "D", "F"];
-  const DEFAULT_STRENGTHS = {
-    raw: 0,
-    conservative: 0.35,
-    balanced: 1.5,
-    optimistic: 35
-  };
-  const PROFILE_DEFAULTS = {
-    custom: null,
-    seeding: {
-      mode: "balanced",
-      strength: 1.0,
-      scale: 60,
-      useUnderdog: false,
-      referenceMode: "median"
+  const CONFIG = {
+    topN: 150,
+    baseTiers: 6,
+    baseTierLabels: ["S", "A", "B", "C", "D", "F"],
+    dataUrl: "https://icy-term-5678.nt-mcguigan.workers.dev",
+    defaultStrengths: {
+      raw: 0,
+      conservative: 0.35,
+      balanced: 1.5,
+      optimistic: 35
     },
-    local: {
-      mode: "optimistic",
-      strength: 30,
-      scale: 50,
-      useUnderdog: true,
-      referenceMode: "median"
-    }
-  };
-  const SEEDING_THRESHOLDS = {
-    spearman: 0.95,
-    top8Overlap: 7,
-    top16Overlap: 13,
-    avgTop8Shift: 2.0,
-    p90AbsChange: 25,
-    maxAbsChange: 40,
-    highRdEntrantsTop16: 1,
-    top16PairRetention: 0.85
-  };
-  const LOCAL_THRESHOLDS = {
-    spearmanMin: 0.82,
-    spearmanMax: 0.985,
-    top8Overlap: 5,
-    top16Overlap: 9,
-    avgTop8ShiftMax: 6.5,
-    avgTop8ShiftMin: 0.75,
-    p90AbsChangeMin: 12,
-    p90AbsChangeMax: 70,
-    maxAbsChange: 100,
-    highRdEntrantsTop16: 4,
-    spreadMin: 1.01,
-    spreadMax: 1.55,
-    optimisticCorrMin: 0.15,
-    optimisticCorrMax: 0.85,
-    balancedCorrAbsMax: 0.6,
-    medianRankShiftMin: 2,
-    top16PairRetentionMin: 0.55
-  };
-
-  const tbody = document.getElementById("b");
-  const profileModeInput = document.getElementById("profileMode");
-  const modeInput = document.getElementById("mode");
-  const adjustmentStrengthInput = document.getElementById("adjustmentStrength");
-  const bonusDivisorInput = document.getElementById("bonusDivisor");
-  const useUnderdogInput = document.getElementById("useUnderdog");
-  const referenceModeInput = document.getElementById("referenceMode");
-  const applyProfileDefaultsButton = document.getElementById("applyProfileDefaults");
-  const autoTuneDiagnosticsButton = document.getElementById("autoTuneDiagnostics");
-  const autoTuneStatus = document.getElementById("autoTuneStatus");
-  const modeHint = document.getElementById("modeHint");
-  const winPctHeader = document.getElementById("winPctHeader");
-  const diagnosticsGrid = document.getElementById("diagnosticsGrid");
-  const profileSummary = document.getElementById("profileSummary");
-
-  const getTierLabel = (index) => {
-    if (index < BASE_TIER_LABELS.length) return BASE_TIER_LABELS[index];
-    if (index === BASE_TIER_LABELS.length) return "F-";
-
-    const extraIndex = index - BASE_TIER_LABELS.length - 1;
-    const tierNumber = 7 + Math.floor(extraIndex / 3);
-    const suffixCycle = ["+", "", "-"];
-    const suffix = suffixCycle[extraIndex % 3];
-
-    return `Tier ${tierNumber}${suffix}`;
-  };
-
-  const median = (values) => {
-    if (!values.length) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-  };
-
-  const mean = (values) => {
-    if (!values.length) return 0;
-    return values.reduce((a, b) => a + b, 0) / values.length;
-  };
-
-  const percentile = (values, p) => {
-    if (!values.length) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const index = (sorted.length - 1) * p;
-    const lower = Math.floor(index);
-    const upper = Math.ceil(index);
-    if (lower === upper) return sorted[lower];
-    const weight = index - lower;
-    return sorted[lower] * (1 - weight) + sorted[upper] * weight;
-  };
-
-  const standardDeviation = (values) => {
-    if (!values.length) return 0;
-    const avg = mean(values);
-    return Math.sqrt(mean(values.map(v => (v - avg) ** 2)));
-  };
-
-  const correlation = (xs, ys) => {
-    if (xs.length !== ys.length || !xs.length) return 0;
-    const meanX = mean(xs);
-    const meanY = mean(ys);
-    let num = 0;
-    let denX = 0;
-    let denY = 0;
-    for (let i = 0; i < xs.length; i++) {
-      const dx = xs[i] - meanX;
-      const dy = ys[i] - meanY;
-      num += dx * dy;
-      denX += dx * dx;
-      denY += dy * dy;
-    }
-    if (!denX || !denY) return 0;
-    return num / Math.sqrt(denX * denY);
-  };
-
-  const rankMapFromSorted = (sorted, key = "athlete") => {
-    const map = new Map();
-    sorted.forEach((p, i) => map.set(p[key], i + 1));
-    return map;
-  };
-
-  const spearmanFromRankMaps = (items, rawRanks, transformedRanks) => {
-    const n = items.length;
-    if (n < 2) return 1;
-    let sumD2 = 0;
-    items.forEach(p => {
-      const d = (rawRanks.get(p.athlete) || 0) - (transformedRanks.get(p.athlete) || 0);
-      sumD2 += d * d;
-    });
-    return 1 - (6 * sumD2) / (n * (n * n - 1));
-  };
-
-  const overlapCount = (a, b) => {
-    const setB = new Set(b);
-    return a.filter(x => setB.has(x)).length;
-  };
-
-  const normalCdf = (x) => {
-    const sign = x < 0 ? -1 : 1;
-    const absX = Math.abs(x) / Math.sqrt(2);
-    const t = 1 / (1 + 0.3275911 * absX);
-    const a1 = 0.254829592;
-    const a2 = -0.284496736;
-    const a3 = 1.421413741;
-    const a4 = -1.453152027;
-    const a5 = 1.061405429;
-    const erf = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
-    return 0.5 * (1 + sign * erf);
-  };
-
-  const getReferenceLabel = (referenceMode) => {
-    if (referenceMode === "mean") return "Vs Mean";
-    if (referenceMode === "top16") return "Vs Top 16";
-    if (referenceMode === "top1") return "Vs #1";
-    return "Vs Median";
-  };
-
-  const getProfileLabel = (profileMode) => {
-    if (profileMode === "seeding") return "Seeding";
-    if (profileMode === "local") return "Local ranking";
-    return "Custom";
-  };
-
-  const getModeHint = (mode, referenceMode, profileMode) => {
-    const referenceText = `${getReferenceLabel(referenceMode)} estimates performance against the selected reference pool using both skill and uncertainty.`;
-    const profileText = `Current profile: ${getProfileLabel(profileMode)}.`;
-
-    if (mode === "raw") {
-      return `Raw mode uses published HEMA Rating only, with no uncertainty adjustment. ${referenceText} ${profileText}`;
-    }
-    if (mode === "conservative") {
-      return `Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. ${referenceText} ${profileText}`;
-    }
-    if (mode === "balanced") {
-      return `Balanced mode shrinks uncertain ratings toward the local median using a strength-scaled RD penalty. Higher strength now means more shrinkage. ${referenceText} ${profileText}`;
-    }
-    return `Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. ${referenceText} ${profileText}`;
-  };
-
-  const formatChange = (value) => {
-    if (Math.abs(value) < 0.05) return `<span class="neutral">0.0</span>`;
-    if (value > 0) return `<span class="positive">+${value.toFixed(1)}</span>`;
-    return `<span class="negative">${value.toFixed(1)}</span>`;
-  };
-
-  const buildReference = (referenceMode, enriched) => {
-    const skills = enriched.map(p => p.skill);
-    const rds = enriched.map(p => p.sigma);
-
-    if (referenceMode === "mean") {
-      return { label: "Vs Mean", skill: mean(skills), rd: Math.max(1, mean(rds)) };
-    }
-    if (referenceMode === "top16") {
-      const top = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, Math.min(16, enriched.length));
-      return {
-        label: "Vs Top 16",
-        skill: mean(top.map(p => p.skill)),
-        rd: Math.max(1, mean(top.map(p => p.sigma)))
-      };
-    }
-    if (referenceMode === "top1") {
-      const top = enriched.slice().sort((a, b) => b.skill - a.skill)[0];
-      return { label: "Vs #1", skill: top?.skill ?? 0, rd: Math.max(1, top?.sigma ?? 1) };
-    }
-    return { label: "Vs Median", skill: median(skills), rd: Math.max(1, median(rds)) };
-  };
-
-  const applyModeDefaults = (mode) => {
-    const defaultStrength = DEFAULT_STRENGTHS[mode] ?? 0;
-    adjustmentStrengthInput.value = String(defaultStrength);
-  };
-
-  const applyProfileDefaults = (profileMode) => {
-    const defaults = PROFILE_DEFAULTS[profileMode];
-    if (!defaults) return;
-    modeInput.value = defaults.mode;
-    adjustmentStrengthInput.value = String(defaults.strength);
-    bonusDivisorInput.value = String(defaults.scale);
-    useUnderdogInput.checked = defaults.useUnderdog;
-    referenceModeInput.value = defaults.referenceMode;
-  };
-
-  const syncControlsToProfile = (profileMode) => {
-    if (profileMode === "custom") return false;
-    applyProfileDefaults(profileMode);
-    return true;
-  };
-
-  const markProfileCustom = () => {
-    if (profileModeInput.value !== "custom") {
-      profileModeInput.value = "custom";
-    }
-  };
-
-  const metricRow = (name, value) => `<div class="metric"><span class="metric-name">${name}</span><span>${value}</span></div>`;
-  const badge = (label, ok) => `<span class="badge ${ok ? "pass" : "fail"}">${label}: ${ok ? "PASS" : "FAIL"}</span>`;
-  const neutralBadge = (label, value) => `<span class="badge neutral">${label}: ${value}</span>`;
-
-  const evaluateProfilePass = (metrics, mode, profileMode) => {
-    const seedingPass = (
-      metrics.spearman >= SEEDING_THRESHOLDS.spearman &&
-      metrics.top8Overlap >= SEEDING_THRESHOLDS.top8Overlap &&
-      metrics.top16Overlap >= SEEDING_THRESHOLDS.top16Overlap &&
-      metrics.avgTop8Shift <= SEEDING_THRESHOLDS.avgTop8Shift &&
-      metrics.p90AbsChange <= SEEDING_THRESHOLDS.p90AbsChange &&
-      metrics.maxAbsChange <= SEEDING_THRESHOLDS.maxAbsChange &&
-      metrics.highRdEntrantsTop16 <= SEEDING_THRESHOLDS.highRdEntrantsTop16 &&
-      metrics.top16PairRetention >= SEEDING_THRESHOLDS.top16PairRetention
-    );
-
-    const corrConstraintPass = mode === "optimistic"
-      ? metrics.rdChangeCorr >= LOCAL_THRESHOLDS.optimisticCorrMin && metrics.rdChangeCorr <= LOCAL_THRESHOLDS.optimisticCorrMax
-      : mode === "balanced"
-        ? Math.abs(metrics.rdChangeCorr) <= LOCAL_THRESHOLDS.balancedCorrAbsMax
-        : true;
-
-    const localPass = (
-      metrics.spearman >= LOCAL_THRESHOLDS.spearmanMin &&
-      metrics.spearman <= LOCAL_THRESHOLDS.spearmanMax &&
-      metrics.top8Overlap >= LOCAL_THRESHOLDS.top8Overlap &&
-      metrics.top16Overlap >= LOCAL_THRESHOLDS.top16Overlap &&
-      metrics.avgTop8Shift <= LOCAL_THRESHOLDS.avgTop8ShiftMax &&
-      metrics.avgTop8Shift >= LOCAL_THRESHOLDS.avgTop8ShiftMin &&
-      metrics.p90AbsChange >= LOCAL_THRESHOLDS.p90AbsChangeMin &&
-      metrics.p90AbsChange <= LOCAL_THRESHOLDS.p90AbsChangeMax &&
-      metrics.maxAbsChange <= LOCAL_THRESHOLDS.maxAbsChange &&
-      metrics.highRdEntrantsTop16 <= LOCAL_THRESHOLDS.highRdEntrantsTop16 &&
-      metrics.top50SpreadRatio >= LOCAL_THRESHOLDS.spreadMin &&
-      metrics.top50SpreadRatio <= LOCAL_THRESHOLDS.spreadMax &&
-      metrics.medianAbsRankShift >= LOCAL_THRESHOLDS.medianRankShiftMin &&
-      metrics.top16PairRetention >= LOCAL_THRESHOLDS.top16PairRetentionMin &&
-      corrConstraintPass
-    );
-
-    if (profileMode === "seeding") return seedingPass;
-    if (profileMode === "local") return localPass;
-    return false;
-  };
-
-  const scoreCandidate = (metrics, mode, profileMode) => {
-    if (profileMode === "seeding") {
-      const passBonus = evaluateProfilePass(metrics, mode, profileMode) ? 1000000 : 0;
-      return passBonus +
-        metrics.spearman * 10000 +
-        metrics.top16Overlap * 100 +
-        metrics.top8Overlap * 50 +
-        metrics.top16PairRetention * 500 -
-        metrics.avgTop8Shift * 200 -
-        metrics.p90AbsChange * 5 -
-        metrics.maxAbsChange * 2 -
-        metrics.highRdEntrantsTop16 * 100;
-    }
-
-    if (profileMode === "local") {
-      const passBonus = evaluateProfilePass(metrics, mode, profileMode) ? 1000000 : 0;
-      const spreadTargetPenalty = Math.abs(metrics.top50SpreadRatio - 1.15) * 250;
-      const corrTarget = mode === "optimistic" ? 0.5 : 0;
-      const corrPenalty = Math.abs(metrics.rdChangeCorr - corrTarget) * 140;
-      const movementReward = Math.min(metrics.medianAbsRankShift, 8) * 180 + Math.min(metrics.avgTop8Shift, 6) * 80;
-      const underMovementPenalty = Math.max(0, 2 - metrics.medianAbsRankShift) * 220 + Math.max(0, 12 - metrics.p90AbsChange) * 16;
-      const overMovementPenalty = Math.max(0, metrics.avgTop8Shift - 6.5) * 100 + Math.max(0, metrics.maxAbsChange - 100) * 6;
-      const orderCompressionPenalty = Math.max(0, metrics.spearman - 0.975) * 3000;
-      const optimisticBiasPenalty = mode === "optimistic" ? 75 : 0;
-      return passBonus +
-        metrics.top16Overlap * 90 +
-        metrics.top8Overlap * 40 +
-        metrics.top16PairRetention * 220 +
-        movementReward -
-        spreadTargetPenalty -
-        corrPenalty -
-        underMovementPenalty -
-        overMovementPenalty -
-        orderCompressionPenalty -
-        optimisticBiasPenalty -
-        metrics.highRdEntrantsTop16 * 60;
-    }
-
-    return -Infinity;
-  };
-
-  const renderDiagnostics = (metrics, mode, profileMode) => {
-    diagnosticsGrid.innerHTML = [
-      metricRow("Spearman ρ", metrics.spearman.toFixed(3)),
-      metricRow("Median |rank shift|", metrics.medianAbsRankShift.toFixed(2)),
-      metricRow("Top 8 overlap", `${metrics.top8Overlap}/8`),
-      metricRow("Top 16 overlap", `${metrics.top16Overlap}/16`),
-      metricRow("Avg top-8 rank shift", metrics.avgTop8Shift.toFixed(2)),
-      metricRow("P90 |change|", metrics.p90AbsChange.toFixed(1)),
-      metricRow("Max |change|", metrics.maxAbsChange.toFixed(1)),
-      metricRow("RD-change corr", metrics.rdChangeCorr.toFixed(3)),
-      metricRow("High-RD entrants in top 16", String(metrics.highRdEntrantsTop16)),
-      metricRow("Top-50 spread ratio", metrics.top50SpreadRatio.toFixed(3)),
-      metricRow("Top-16 pair retention", metrics.top16PairRetention.toFixed(3))
-    ].join("");
-
-    const seedingPass = evaluateProfilePass(metrics, mode, "seeding");
-    const localPass = evaluateProfilePass(metrics, mode, "local");
-
-    const corrBadgeLabel = mode === "optimistic"
-      ? `RD corr target ${LOCAL_THRESHOLDS.optimisticCorrMin}-${LOCAL_THRESHOLDS.optimisticCorrMax}`
-      : mode === "balanced"
-        ? `|RD corr| ≤ ${LOCAL_THRESHOLDS.balancedCorrAbsMax}`
-        : "RD corr unrestricted";
-
-    profileSummary.innerHTML = [
-      badge("Seeding profile", seedingPass),
-      badge("Local ranking profile", localPass),
-      neutralBadge("Selected profile", getProfileLabel(profileMode)),
-      neutralBadge("Mode", mode),
-      neutralBadge("RD guardrail", corrBadgeLabel)
-    ].join("");
-  };
-
-  const computeMetrics = (players, enriched, rawSorted, transformedSorted) => {
-    const rawRanks = rankMapFromSorted(rawSorted);
-    const transformedRanks = rankMapFromSorted(transformedSorted);
-    const rawTop8 = rawSorted.slice(0, 8).map(p => p.athlete);
-    const rawTop16 = rawSorted.slice(0, 16).map(p => p.athlete);
-    const transformedTop8 = transformedSorted.slice(0, 8).map(p => p.athlete);
-    const transformedTop16 = transformedSorted.slice(0, 16).map(p => p.athlete);
-    const changeValues = enriched.map(p => Math.abs(p.change));
-    const rdValues = enriched.map(p => p.sigma);
-    const signedChanges = enriched.map(p => p.change);
-    const rd75 = percentile(rdValues, 0.75);
-    const top16Entrants = transformedSorted.slice(0, 16).filter(p => !rawTop16.includes(p.athlete));
-    const highRdEntrantsTop16 = top16Entrants.filter(p => p.sigma > rd75).length;
-    const rawTop8Players = rawSorted.slice(0, 8);
-    const avgTop8Shift = mean(rawTop8Players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0))));
-    const allAbsRankShifts = players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0)));
-    const medianAbsRankShift = median(allAbsRankShifts);
-    const top50Raw = rawSorted.slice(0, Math.min(50, rawSorted.length)).map(p => p.rating);
-    const top50Transformed = transformedSorted.slice(0, Math.min(50, transformedSorted.length)).map(p => p.skill);
-    const top50SpreadRatio = standardDeviation(top50Transformed) / Math.max(1e-9, standardDeviation(top50Raw));
-
-    const rawTop16Players = rawSorted.slice(0, Math.min(16, rawSorted.length));
-    let preservedPairs = 0;
-    let totalPairs = 0;
-    for (let i = 0; i < rawTop16Players.length; i++) {
-      for (let j = i + 1; j < rawTop16Players.length; j++) {
-        totalPairs += 1;
-        const a = rawTop16Players[i].athlete;
-        const b = rawTop16Players[j].athlete;
-        if ((transformedRanks.get(a) || Infinity) < (transformedRanks.get(b) || Infinity)) {
-          preservedPairs += 1;
-        }
+    profileDefaults: {
+      custom: null,
+      seeding: {
+        mode: "balanced",
+        strength: 1.0,
+        scale: 60,
+        useUnderdog: false,
+        referenceMode: "median"
+      },
+      local: {
+        mode: "optimistic",
+        strength: 30,
+        scale: 50,
+        useUnderdog: true,
+        referenceMode: "median"
+      }
+    },
+    thresholds: {
+      seeding: {
+        spearman: 0.95,
+        top8Overlap: 7,
+        top16Overlap: 13,
+        avgTop8Shift: 2.0,
+        p90AbsChange: 25,
+        maxAbsChange: 40,
+        highRdEntrantsTop16: 1,
+        top16PairRetention: 0.85
+      },
+      local: {
+        spearmanMin: 0.82,
+        spearmanMax: 0.985,
+        top8Overlap: 5,
+        top16Overlap: 9,
+        avgTop8ShiftMax: 6.5,
+        avgTop8ShiftMin: 0.75,
+        p90AbsChangeMin: 12,
+        p90AbsChangeMax: 70,
+        maxAbsChange: 100,
+        highRdEntrantsTop16: 4,
+        spreadMin: 1.01,
+        spreadMax: 1.55,
+        optimisticCorrMin: 0.15,
+        optimisticCorrMax: 0.85,
+        balancedCorrAbsMax: 0.6,
+        medianRankShiftMin: 2,
+        top16PairRetentionMin: 0.55
       }
     }
-
-    return {
-      spearman: spearmanFromRankMaps(players, rawRanks, transformedRanks),
-      medianAbsRankShift,
-      top8Overlap: overlapCount(rawTop8, transformedTop8),
-      top16Overlap: overlapCount(rawTop16, transformedTop16),
-      avgTop8Shift,
-      p90AbsChange: percentile(changeValues, 0.9),
-      maxAbsChange: Math.max(...changeValues, 0),
-      rdChangeCorr: correlation(rdValues, signedChanges),
-      highRdEntrantsTop16,
-      top50SpreadRatio,
-      top16PairRetention: totalPairs ? preservedPairs / totalPairs : 1
-    };
   };
 
-  const isAUorNZ = (t) => {
-    t = (t || "").toLowerCase();
-    return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
+  const dom = {
+    tbody: document.getElementById("b"),
+    profileModeInput: document.getElementById("profileMode"),
+    modeInput: document.getElementById("mode"),
+    adjustmentStrengthInput: document.getElementById("adjustmentStrength"),
+    bonusDivisorInput: document.getElementById("bonusDivisor"),
+    useUnderdogInput: document.getElementById("useUnderdog"),
+    referenceModeInput: document.getElementById("referenceMode"),
+    applyProfileDefaultsButton: document.getElementById("applyProfileDefaults"),
+    autoTuneDiagnosticsButton: document.getElementById("autoTuneDiagnostics"),
+    autoTuneStatus: document.getElementById("autoTuneStatus"),
+    modeHint: document.getElementById("modeHint"),
+    winPctHeader: document.getElementById("winPctHeader"),
+    diagnosticsGrid: document.getElementById("diagnosticsGrid"),
+    profileSummary: document.getElementById("profileSummary")
   };
 
-  let players = [];
-  try {
-    const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    players = await res.json();
-  } catch (err) {
-    console.error("Failed to load player data:", err);
-    tbody.innerHTML = `<tr><td colspan="9">Failed to load player data. Check the API endpoint / CORS settings.</td></tr>`;
-    return;
-  }
+  const stats = {
+    median(values) {
+      if (!values.length) return 0;
+      const sorted = values.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    },
 
-  players = players.filter(p => isAUorNZ(p.nationality));
+    mean(values) {
+      if (!values.length) return 0;
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    },
 
-  if (!players.length) {
-    tbody.innerHTML = `<tr><td colspan="9">No AU/NZ players found.</td></tr>`;
-    return;
-  }
+    percentile(values, p) {
+      if (!values.length) return 0;
+      const sorted = values.slice().sort((a, b) => a - b);
+      const index = (sorted.length - 1) * p;
+      const lower = Math.floor(index);
+      const upper = Math.ceil(index);
+      if (lower === upper) return sorted[lower];
+      const weight = index - lower;
+      return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+    },
 
-  const ratingValues = players.map(p => p.rating || 0);
-  const meanRating = mean(ratingValues);
-  const medianRating = median(ratingValues);
-  const rawSorted = players.slice().sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    standardDeviation(values) {
+      if (!values.length) return 0;
+      const avg = this.mean(values);
+      return Math.sqrt(this.mean(values.map(v => (v - avg) ** 2)));
+    },
 
-  const buildEnriched = (mode, adjustmentStrength, bonusDivisor, useUnderdog) => {
-    return players.map(p => {
-      const rating = p.rating || 0;
-      const rd = p.confidence || 0;
-      let skill = rating;
+    correlation(xs, ys) {
+      if (xs.length !== ys.length || !xs.length) return 0;
+      const meanX = this.mean(xs);
+      const meanY = this.mean(ys);
+      let num = 0;
+      let denX = 0;
+      let denY = 0;
+      for (let i = 0; i < xs.length; i++) {
+        const dx = xs[i] - meanX;
+        const dy = ys[i] - meanY;
+        num += dx * dy;
+        denX += dx * dx;
+        denY += dy * dy;
+      }
+      if (!denX || !denY) return 0;
+      return num / Math.sqrt(denX * denY);
+    },
 
+    normalCdf(x) {
+      const sign = x < 0 ? -1 : 1;
+      const absX = Math.abs(x) / Math.sqrt(2);
+      const t = 1 / (1 + 0.3275911 * absX);
+      const a1 = 0.254829592;
+      const a2 = -0.284496736;
+      const a3 = 1.421413741;
+      const a4 = -1.453152027;
+      const a5 = 1.061405429;
+      const erf = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+      return 0.5 * (1 + sign * erf);
+    }
+  };
+
+  const labels = {
+    getTierLabel(index) {
+      if (index < CONFIG.baseTierLabels.length) return CONFIG.baseTierLabels[index];
+      if (index === CONFIG.baseTierLabels.length) return "F-";
+
+      const extraIndex = index - CONFIG.baseTierLabels.length - 1;
+      const tierNumber = 7 + Math.floor(extraIndex / 3);
+      const suffixCycle = ["+", "", "-"];
+      const suffix = suffixCycle[extraIndex % 3];
+
+      return `Tier ${tierNumber}${suffix}`;
+    },
+
+    getReferenceLabel(referenceMode) {
+      if (referenceMode === "mean") return "Vs Mean";
+      if (referenceMode === "top16") return "Vs Top 16";
+      if (referenceMode === "top1") return "Vs #1";
+      return "Vs Median";
+    },
+
+    getProfileLabel(profileMode) {
+      if (profileMode === "seeding") return "Seeding";
+      if (profileMode === "local") return "Local ranking";
+      return "Custom";
+    },
+
+    getModeHint(mode, referenceMode, profileMode) {
+      const referenceText = `${this.getReferenceLabel(referenceMode)} estimates performance against the selected reference pool using both skill and uncertainty.`;
+      const profileText = `Current profile: ${this.getProfileLabel(profileMode)}.`;
+
+      if (mode === "raw") {
+        return `Raw mode uses published HEMA Rating only, with no uncertainty adjustment. ${referenceText} ${profileText}`;
+      }
       if (mode === "conservative") {
-        skill = rating - adjustmentStrength * rd;
-      } else if (mode === "balanced") {
-        const scaledPenalty = adjustmentStrength * Math.pow(rd / bonusDivisor, 2);
-        const weight = 1 / (1 + scaledPenalty);
-        skill = medianRating + (rating - medianRating) * weight;
-      } else if (mode === "optimistic") {
-        let bonus = adjustmentStrength * Math.log1p(rd / bonusDivisor);
-        if (useUnderdog) {
-          const underdogFactor = Math.max(0.7, Math.min(1.5, 1 + (meanRating - rating) / 400));
-          bonus *= underdogFactor;
+        return `Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. ${referenceText} ${profileText}`;
+      }
+      if (mode === "balanced") {
+        return `Balanced mode shrinks uncertain ratings toward the local median using a strength-scaled RD penalty. Higher strength now means more shrinkage. ${referenceText} ${profileText}`;
+      }
+      return `Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. ${referenceText} ${profileText}`;
+    },
+
+    formatChange(value) {
+      if (Math.abs(value) < 0.05) return `<span class="neutral">0.0</span>`;
+      if (value > 0) return `<span class="positive">+${value.toFixed(1)}</span>`;
+      return `<span class="negative">${value.toFixed(1)}</span>`;
+    }
+  };
+
+  const rankingEngine = {
+    buildReference(referenceMode, enriched) {
+      const skills = enriched.map(p => p.skill);
+      const rds = enriched.map(p => p.sigma);
+
+      if (referenceMode === "mean") {
+        return { label: "Vs Mean", skill: stats.mean(skills), rd: Math.max(1, stats.mean(rds)) };
+      }
+      if (referenceMode === "top16") {
+        const top = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, Math.min(16, enriched.length));
+        return {
+          label: "Vs Top 16",
+          skill: stats.mean(top.map(p => p.skill)),
+          rd: Math.max(1, stats.mean(top.map(p => p.sigma)))
+        };
+      }
+      if (referenceMode === "top1") {
+        const top = enriched.slice().sort((a, b) => b.skill - a.skill)[0];
+        return { label: "Vs #1", skill: top?.skill ?? 0, rd: Math.max(1, top?.sigma ?? 1) };
+      }
+      return { label: "Vs Median", skill: stats.median(skills), rd: Math.max(1, stats.median(rds)) };
+    },
+
+    buildEnriched(players, ratingContext, mode, adjustmentStrength, bonusDivisor, useUnderdog) {
+      return players.map(p => {
+        const rating = p.rating || 0;
+        const rd = p.confidence || 0;
+        let skill = rating;
+
+        if (mode === "conservative") {
+          skill = rating - adjustmentStrength * rd;
+        } else if (mode === "balanced") {
+          const scaledPenalty = adjustmentStrength * Math.pow(rd / bonusDivisor, 2);
+          const weight = 1 / (1 + scaledPenalty);
+          skill = ratingContext.medianRating + (rating - ratingContext.medianRating) * weight;
+        } else if (mode === "optimistic") {
+          let bonus = adjustmentStrength * Math.log1p(rd / bonusDivisor);
+          if (useUnderdog) {
+            const underdogFactor = Math.max(0.7, Math.min(1.5, 1 + (ratingContext.meanRating - rating) / 400));
+            bonus *= underdogFactor;
+          }
+          skill = rating + bonus;
         }
-        skill = rating + bonus;
+
+        const sigma = rd;
+        const change = skill - rating;
+        return { ...p, skill, sigma, change };
+      });
+    },
+
+    buildTierMaps(sorted) {
+      const tiers = Array.from({ length: CONFIG.baseTiers }, () => []);
+      sorted.forEach((p, i) => {
+        const idx = Math.min(CONFIG.baseTiers - 1, Math.floor((i / sorted.length) * CONFIG.baseTiers));
+        tiers[idx].push(p);
+      });
+
+      const tierMap = new Map();
+      tiers.forEach((tier, index) => tier.forEach(player => tierMap.set(player.athlete, labels.getTierLabel(index))));
+
+      const gradeMap = new Map();
+      tiers.forEach(tier => {
+        if (!tier.length) return;
+        const min = Math.min(...tier.map(p => p.skill));
+        const max = Math.max(...tier.map(p => p.skill));
+        tier.forEach(p => {
+          const z = (p.skill - min) / ((max - min) || 1);
+          let grade = "";
+          if (z > 0.66) grade = "+";
+          else if (z < 0.33) grade = "-";
+          gradeMap.set(p.athlete, grade);
+        });
+      });
+
+      return { tierMap, gradeMap };
+    },
+
+    createHeatFunction(enriched) {
+      const vals = enriched.map(d => d.skill);
+      const minS = Math.min(...vals);
+      const maxS = Math.max(...vals);
+      return (value) => {
+        const t = (value - minS) / ((maxS - minS) || 1);
+        return `rgba(${255 * (1 - t) | 0},${200 * t | 0},120,0.25)`;
+      };
+    },
+
+    createWinProbability(reference) {
+      return (skill, rd) => {
+        const combinedRd = Math.sqrt((rd * rd) + (reference.rd * reference.rd));
+        const z = (skill - reference.skill) / Math.max(1, combinedRd);
+        return stats.normalCdf(z);
+      };
+    }
+  };
+
+  const diagnosticsEngine = {
+    rankMapFromSorted(sorted, key = "athlete") {
+      const map = new Map();
+      sorted.forEach((p, i) => map.set(p[key], i + 1));
+      return map;
+    },
+
+    spearmanFromRankMaps(items, rawRanks, transformedRanks) {
+      const n = items.length;
+      if (n < 2) return 1;
+      let sumD2 = 0;
+      items.forEach(p => {
+        const d = (rawRanks.get(p.athlete) || 0) - (transformedRanks.get(p.athlete) || 0);
+        sumD2 += d * d;
+      });
+      return 1 - (6 * sumD2) / (n * (n * n - 1));
+    },
+
+    overlapCount(a, b) {
+      const setB = new Set(b);
+      return a.filter(x => setB.has(x)).length;
+    },
+
+    computeMetrics(players, enriched, rawSorted, transformedSorted) {
+      const rawRanks = this.rankMapFromSorted(rawSorted);
+      const transformedRanks = this.rankMapFromSorted(transformedSorted);
+      const rawTop8 = rawSorted.slice(0, 8).map(p => p.athlete);
+      const rawTop16 = rawSorted.slice(0, 16).map(p => p.athlete);
+      const transformedTop8 = transformedSorted.slice(0, 8).map(p => p.athlete);
+      const transformedTop16 = transformedSorted.slice(0, 16).map(p => p.athlete);
+      const changeValues = enriched.map(p => Math.abs(p.change));
+      const rdValues = enriched.map(p => p.sigma);
+      const signedChanges = enriched.map(p => p.change);
+      const rd75 = stats.percentile(rdValues, 0.75);
+      const top16Entrants = transformedSorted.slice(0, 16).filter(p => !rawTop16.includes(p.athlete));
+      const highRdEntrantsTop16 = top16Entrants.filter(p => p.sigma > rd75).length;
+      const rawTop8Players = rawSorted.slice(0, 8);
+      const avgTop8Shift = stats.mean(rawTop8Players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0))));
+      const allAbsRankShifts = players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0)));
+      const medianAbsRankShift = stats.median(allAbsRankShifts);
+      const top50Raw = rawSorted.slice(0, Math.min(50, rawSorted.length)).map(p => p.rating);
+      const top50Transformed = transformedSorted.slice(0, Math.min(50, transformedSorted.length)).map(p => p.skill);
+      const top50SpreadRatio = stats.standardDeviation(top50Transformed) / Math.max(1e-9, stats.standardDeviation(top50Raw));
+
+      const rawTop16Players = rawSorted.slice(0, Math.min(16, rawSorted.length));
+      let preservedPairs = 0;
+      let totalPairs = 0;
+      for (let i = 0; i < rawTop16Players.length; i++) {
+        for (let j = i + 1; j < rawTop16Players.length; j++) {
+          totalPairs += 1;
+          const a = rawTop16Players[i].athlete;
+          const b = rawTop16Players[j].athlete;
+          if ((transformedRanks.get(a) || Infinity) < (transformedRanks.get(b) || Infinity)) {
+            preservedPairs += 1;
+          }
+        }
       }
 
-      const sigma = rd;
-      const change = skill - rating;
-      return { ...p, skill, sigma, change };
-    });
+      return {
+        spearman: this.spearmanFromRankMaps(players, rawRanks, transformedRanks),
+        medianAbsRankShift,
+        top8Overlap: this.overlapCount(rawTop8, transformedTop8),
+        top16Overlap: this.overlapCount(rawTop16, transformedTop16),
+        avgTop8Shift,
+        p90AbsChange: stats.percentile(changeValues, 0.9),
+        maxAbsChange: Math.max(...changeValues, 0),
+        rdChangeCorr: stats.correlation(rdValues, signedChanges),
+        highRdEntrantsTop16,
+        top50SpreadRatio,
+        top16PairRetention: totalPairs ? preservedPairs / totalPairs : 1
+      };
+    },
+
+    evaluateProfilePass(metrics, mode, profileMode) {
+      const seedingThresholds = CONFIG.thresholds.seeding;
+      const localThresholds = CONFIG.thresholds.local;
+
+      const seedingPass = (
+        metrics.spearman >= seedingThresholds.spearman &&
+        metrics.top8Overlap >= seedingThresholds.top8Overlap &&
+        metrics.top16Overlap >= seedingThresholds.top16Overlap &&
+        metrics.avgTop8Shift <= seedingThresholds.avgTop8Shift &&
+        metrics.p90AbsChange <= seedingThresholds.p90AbsChange &&
+        metrics.maxAbsChange <= seedingThresholds.maxAbsChange &&
+        metrics.highRdEntrantsTop16 <= seedingThresholds.highRdEntrantsTop16 &&
+        metrics.top16PairRetention >= seedingThresholds.top16PairRetention
+      );
+
+      const corrConstraintPass = mode === "optimistic"
+        ? metrics.rdChangeCorr >= localThresholds.optimisticCorrMin && metrics.rdChangeCorr <= localThresholds.optimisticCorrMax
+        : mode === "balanced"
+          ? Math.abs(metrics.rdChangeCorr) <= localThresholds.balancedCorrAbsMax
+          : true;
+
+      const localPass = (
+        metrics.spearman >= localThresholds.spearmanMin &&
+        metrics.spearman <= localThresholds.spearmanMax &&
+        metrics.top8Overlap >= localThresholds.top8Overlap &&
+        metrics.top16Overlap >= localThresholds.top16Overlap &&
+        metrics.avgTop8Shift <= localThresholds.avgTop8ShiftMax &&
+        metrics.avgTop8Shift >= localThresholds.avgTop8ShiftMin &&
+        metrics.p90AbsChange >= localThresholds.p90AbsChangeMin &&
+        metrics.p90AbsChange <= localThresholds.p90AbsChangeMax &&
+        metrics.maxAbsChange <= localThresholds.maxAbsChange &&
+        metrics.highRdEntrantsTop16 <= localThresholds.highRdEntrantsTop16 &&
+        metrics.top50SpreadRatio >= localThresholds.spreadMin &&
+        metrics.top50SpreadRatio <= localThresholds.spreadMax &&
+        metrics.medianAbsRankShift >= localThresholds.medianRankShiftMin &&
+        metrics.top16PairRetention >= localThresholds.top16PairRetentionMin &&
+        corrConstraintPass
+      );
+
+      if (profileMode === "seeding") return seedingPass;
+      if (profileMode === "local") return localPass;
+      return false;
+    },
+
+    scoreCandidate(metrics, mode, profileMode) {
+      if (profileMode === "seeding") {
+        const passBonus = this.evaluateProfilePass(metrics, mode, profileMode) ? 1000000 : 0;
+        return passBonus +
+          metrics.spearman * 10000 +
+          metrics.top16Overlap * 100 +
+          metrics.top8Overlap * 50 +
+          metrics.top16PairRetention * 500 -
+          metrics.avgTop8Shift * 200 -
+          metrics.p90AbsChange * 5 -
+          metrics.maxAbsChange * 2 -
+          metrics.highRdEntrantsTop16 * 100;
+      }
+
+      if (profileMode === "local") {
+        const passBonus = this.evaluateProfilePass(metrics, mode, profileMode) ? 1000000 : 0;
+        const spreadTargetPenalty = Math.abs(metrics.top50SpreadRatio - 1.15) * 250;
+        const corrTarget = mode === "optimistic" ? 0.5 : 0;
+        const corrPenalty = Math.abs(metrics.rdChangeCorr - corrTarget) * 140;
+        const movementReward = Math.min(metrics.medianAbsRankShift, 8) * 180 + Math.min(metrics.avgTop8Shift, 6) * 80;
+        const underMovementPenalty = Math.max(0, 2 - metrics.medianAbsRankShift) * 220 + Math.max(0, 12 - metrics.p90AbsChange) * 16;
+        const overMovementPenalty = Math.max(0, metrics.avgTop8Shift - 6.5) * 100 + Math.max(0, metrics.maxAbsChange - 100) * 6;
+        const orderCompressionPenalty = Math.max(0, metrics.spearman - 0.975) * 3000;
+        const optimisticBiasPenalty = mode === "optimistic" ? 75 : 0;
+        return passBonus +
+          metrics.top16Overlap * 90 +
+          metrics.top8Overlap * 40 +
+          metrics.top16PairRetention * 220 +
+          movementReward -
+          spreadTargetPenalty -
+          corrPenalty -
+          underMovementPenalty -
+          overMovementPenalty -
+          orderCompressionPenalty -
+          optimisticBiasPenalty -
+          metrics.highRdEntrantsTop16 * 60;
+      }
+
+      return -Infinity;
+    },
+
+    getCorrBadgeLabel(mode) {
+      const localThresholds = CONFIG.thresholds.local;
+      if (mode === "optimistic") {
+        return `RD corr target ${localThresholds.optimisticCorrMin}-${localThresholds.optimisticCorrMax}`;
+      }
+      if (mode === "balanced") {
+        return `|RD corr| ≤ ${localThresholds.balancedCorrAbsMax}`;
+      }
+      return "RD corr unrestricted";
+    }
   };
 
-  const getSearchRanges = (mode) => {
-    if (mode === "conservative") {
-      return {
-        strengths: Array.from({ length: 20 }, (_, i) => Number(((i + 1) * 0.05).toFixed(2))),
-        scales: [Number(bonusDivisorInput.value) || 60]
-      };
+  const ui = {
+    metricRow(name, value) {
+      return `<div class="metric"><span class="metric-name">${name}</span><span>${value}</span></div>`;
+    },
+
+    badge(label, ok) {
+      return `<span class="badge ${ok ? "pass" : "fail"}">${label}: ${ok ? "PASS" : "FAIL"}</span>`;
+    },
+
+    neutralBadge(label, value) {
+      return `<span class="badge neutral">${label}: ${value}</span>`;
+    },
+
+    showError(message) {
+      dom.tbody.innerHTML = `<tr><td colspan="9">${message}</td></tr>`;
+    },
+
+    renderDiagnostics(metrics, mode, profileMode) {
+      dom.diagnosticsGrid.innerHTML = [
+        this.metricRow("Spearman ρ", metrics.spearman.toFixed(3)),
+        this.metricRow("Median |rank shift|", metrics.medianAbsRankShift.toFixed(2)),
+        this.metricRow("Top 8 overlap", `${metrics.top8Overlap}/8`),
+        this.metricRow("Top 16 overlap", `${metrics.top16Overlap}/16`),
+        this.metricRow("Avg top-8 rank shift", metrics.avgTop8Shift.toFixed(2)),
+        this.metricRow("P90 |change|", metrics.p90AbsChange.toFixed(1)),
+        this.metricRow("Max |change|", metrics.maxAbsChange.toFixed(1)),
+        this.metricRow("RD-change corr", metrics.rdChangeCorr.toFixed(3)),
+        this.metricRow("High-RD entrants in top 16", String(metrics.highRdEntrantsTop16)),
+        this.metricRow("Top-50 spread ratio", metrics.top50SpreadRatio.toFixed(3)),
+        this.metricRow("Top-16 pair retention", metrics.top16PairRetention.toFixed(3))
+      ].join("");
+
+      const seedingPass = diagnosticsEngine.evaluateProfilePass(metrics, mode, "seeding");
+      const localPass = diagnosticsEngine.evaluateProfilePass(metrics, mode, "local");
+
+      dom.profileSummary.innerHTML = [
+        this.badge("Seeding profile", seedingPass),
+        this.badge("Local ranking profile", localPass),
+        this.neutralBadge("Selected profile", labels.getProfileLabel(profileMode)),
+        this.neutralBadge("Mode", mode),
+        this.neutralBadge("RD guardrail", diagnosticsEngine.getCorrBadgeLabel(mode))
+      ].join("");
+    },
+
+    renderTable(sorted, tierMap, gradeMap, heat, winProb) {
+      dom.tbody.innerHTML = "";
+      sorted.forEach((p, i) => {
+        const tier = tierMap.get(p.athlete);
+        const grade = gradeMap.get(p.athlete);
+        const tr = document.createElement("tr");
+        tr.style.background = heat(p.skill);
+        tr.innerHTML =
+          `<td>${i + 1}</td>` +
+          `<td>${tier}${grade}</td>` +
+          `<td>${p.athlete}</td>` +
+          `<td>${p.club}</td>` +
+          `<td>${(p.rating ?? 0).toFixed(1)}</td>` +
+          `<td>${labels.formatChange(p.change ?? 0)}</td>` +
+          `<td>${(p.skill ?? 0).toFixed(2)}</td>` +
+          `<td>${(p.sigma ?? 0).toFixed(1)}</td>` +
+          `<td>${(winProb(p.skill, p.sigma) * 100).toFixed(1)}%</td>`;
+        dom.tbody.appendChild(tr);
+      });
+    },
+
+    updateStatus(message) {
+      dom.autoTuneStatus.textContent = message;
+    },
+
+    render(state, derived) {
+      dom.modeHint.textContent = labels.getModeHint(state.profileMode, state.referenceMode, state.profileMode).replace(labels.getModeHint(state.profileMode, state.referenceMode, state.profileMode), labels.getModeHint(state.mode, state.referenceMode, state.profileMode));
+      dom.useUnderdogInput.disabled = state.mode !== "optimistic";
+      if (state.mode !== "optimistic") {
+        dom.useUnderdogInput.checked = false;
+      }
+
+      dom.winPctHeader.innerHTML = `${derived.reference.label} <span class="help" aria-hidden="true" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">?</span>`;
+      dom.winPctHeader.title = `Chance of beating the selected ${derived.reference.label.replace("Vs ", "").toLowerCase()} reference opponent, using displayed skill and combined uncertainty.`;
+
+      this.renderDiagnostics(derived.metrics, state.mode, state.profileMode);
+      this.renderTable(derived.sorted, derived.tierMap, derived.gradeMap, derived.heat, derived.winProb);
     }
-    if (mode === "balanced") {
-      return {
-        strengths: Array.from({ length: 20 }, (_, i) => Number(((i + 1) * 0.25).toFixed(2))),
-        scales: Array.from({ length: 13 }, (_, i) => 20 + i * 10)
-      };
-    }
-    if (mode === "optimistic") {
-      return {
-        strengths: Array.from({ length: 20 }, (_, i) => 5 + i * 5),
-        scales: Array.from({ length: 17 }, (_, i) => 20 + i * 10)
-      };
-    }
-    return { strengths: [0], scales: [Number(bonusDivisorInput.value) || 60] };
   };
 
-  const autoTuneDiagnostics = () => {
-    const profileMode = profileModeInput.value;
-    const selectedMode = modeInput.value;
-    const selectedUseUnderdog = useUnderdogInput.checked;
+  const stateManager = {
+    createInitialState() {
+      return {
+        profileMode: dom.profileModeInput.value,
+        mode: dom.modeInput.value,
+        strength: Number(dom.adjustmentStrengthInput.value) || 0,
+        scale: Number(dom.bonusDivisorInput.value) || 1,
+        useUnderdog: dom.useUnderdogInput.checked,
+        referenceMode: dom.referenceModeInput.value,
+        autoTuneStatus: "Auto-tune status: idle."
+      };
+    },
 
-    if (profileMode === "custom") {
-      autoTuneStatus.textContent = "Auto-tune status: select Seeding or Local ranking first.";
-      return;
+    syncStateToControls(state) {
+      dom.profileModeInput.value = state.profileMode;
+      dom.modeInput.value = state.mode;
+      dom.adjustmentStrengthInput.value = String(state.strength);
+      dom.bonusDivisorInput.value = String(state.scale);
+      dom.useUnderdogInput.checked = state.useUnderdog;
+      dom.referenceModeInput.value = state.referenceMode;
+      ui.updateStatus(state.autoTuneStatus);
+    },
+
+    readControlsIntoState(state) {
+      state.profileMode = dom.profileModeInput.value;
+      state.mode = dom.modeInput.value;
+      state.strength = Math.max(0, Number(dom.adjustmentStrengthInput.value) || 0);
+      state.scale = Math.max(1, Number(dom.bonusDivisorInput.value) || 1);
+      state.useUnderdog = dom.useUnderdogInput.checked;
+      state.referenceMode = dom.referenceModeInput.value;
+    },
+
+    applyModeDefaults(state, mode) {
+      state.mode = mode;
+      state.strength = CONFIG.defaultStrengths[mode] ?? 0;
+    },
+
+    applyProfileDefaults(state, profileMode) {
+      const defaults = CONFIG.profileDefaults[profileMode];
+      if (!defaults) return false;
+      state.profileMode = profileMode;
+      state.mode = defaults.mode;
+      state.strength = defaults.strength;
+      state.scale = defaults.scale;
+      state.useUnderdog = defaults.useUnderdog;
+      state.referenceMode = defaults.referenceMode;
+      return true;
+    },
+
+    syncControlsToProfile(state, profileMode) {
+      if (profileMode === "custom") return false;
+      return this.applyProfileDefaults(state, profileMode);
+    },
+
+    markProfileCustom(state) {
+      if (state.profileMode !== "custom") {
+        state.profileMode = "custom";
+      }
     }
+  };
 
-    if (selectedMode === "raw" && profileMode === "seeding") {
-      autoTuneStatus.textContent = "Auto-tune status: Raw mode has no strength/scale tuning to perform.";
-      render();
-      return;
-    }
+  const autoTuneEngine = {
+    getSearchRanges(mode, currentScale) {
+      if (mode === "conservative") {
+        return {
+          strengths: Array.from({ length: 20 }, (_, i) => Number(((i + 1) * 0.05).toFixed(2))),
+          scales: [currentScale || 60]
+        };
+      }
+      if (mode === "balanced") {
+        return {
+          strengths: Array.from({ length: 20 }, (_, i) => Number(((i + 1) * 0.25).toFixed(2))),
+          scales: Array.from({ length: 13 }, (_, i) => 20 + i * 10)
+        };
+      }
+      if (mode === "optimistic") {
+        return {
+          strengths: Array.from({ length: 20 }, (_, i) => 5 + i * 5),
+          scales: Array.from({ length: 17 }, (_, i) => 20 + i * 10)
+        };
+      }
+      return { strengths: [0], scales: [currentScale || 60] };
+    },
 
-    const candidateModes = profileMode === "local"
-      ? ["balanced", "optimistic"]
-      : [selectedMode];
+    chooseCandidate(state, players, rawSorted, ratingContext) {
+      const profileMode = state.profileMode;
+      const selectedMode = state.mode;
+      const selectedUseUnderdog = state.useUnderdog;
 
-    let bestCandidate = null;
-    let bestPassingCandidate = null;
+      if (profileMode === "custom") {
+        return { error: "Auto-tune status: select Seeding or Local ranking first." };
+      }
 
-    candidateModes.forEach(candidateMode => {
-      const { strengths, scales } = getSearchRanges(candidateMode);
-      strengths.forEach(strength => {
-        scales.forEach(scale => {
-          const underdogOptions = candidateMode === "optimistic" ? [false, true] : [false];
-          underdogOptions.forEach(candidateUseUnderdog => {
-            const enriched = buildEnriched(candidateMode, strength, scale, candidateUseUnderdog);
-            const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
-            const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
-            const passes = evaluateProfilePass(metrics, candidateMode, profileMode);
-            const score = scoreCandidate(metrics, candidateMode, profileMode);
-            const modePreferenceBonus = profileMode === "local" && candidateMode === selectedMode ? 15 : 0;
-            const underdogPreferenceBonus = profileMode === "local" && candidateMode === "optimistic" && candidateUseUnderdog === selectedUseUnderdog ? 5 : 0;
-            const candidate = {
-              mode: candidateMode,
-              strength,
-              scale,
-              useUnderdog: candidateUseUnderdog,
-              metrics,
-              passes,
-              score: score + modePreferenceBonus + underdogPreferenceBonus
-            };
+      if (selectedMode === "raw" && profileMode === "seeding") {
+        return { error: "Auto-tune status: Raw mode has no strength/scale tuning to perform." };
+      }
 
-            if (!bestCandidate || candidate.score > bestCandidate.score) {
-              bestCandidate = candidate;
-            }
-            if (passes && (!bestPassingCandidate || candidate.score > bestPassingCandidate.score)) {
-              bestPassingCandidate = candidate;
-            }
+      const candidateModes = profileMode === "local" ? ["balanced", "optimistic"] : [selectedMode];
+
+      let bestCandidate = null;
+      let bestPassingCandidate = null;
+
+      candidateModes.forEach(candidateMode => {
+        const { strengths, scales } = this.getSearchRanges(candidateMode, state.scale);
+        strengths.forEach(strength => {
+          scales.forEach(scale => {
+            const underdogOptions = candidateMode === "optimistic" ? [false, true] : [false];
+            underdogOptions.forEach(candidateUseUnderdog => {
+              const enriched = rankingEngine.buildEnriched(players, ratingContext, candidateMode, strength, scale, candidateUseUnderdog);
+              const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+              const metrics = diagnosticsEngine.computeMetrics(players, enriched, rawSorted, fullSorted);
+              const passes = diagnosticsEngine.evaluateProfilePass(metrics, candidateMode, profileMode);
+              const score = diagnosticsEngine.scoreCandidate(metrics, candidateMode, profileMode);
+              const modePreferenceBonus = profileMode === "local" && candidateMode === selectedMode ? 15 : 0;
+              const underdogPreferenceBonus = profileMode === "local" && candidateMode === "optimistic" && candidateUseUnderdog === selectedUseUnderdog ? 5 : 0;
+
+              const candidate = {
+                mode: candidateMode,
+                strength,
+                scale,
+                useUnderdog: candidateUseUnderdog,
+                metrics,
+                passes,
+                score: score + modePreferenceBonus + underdogPreferenceBonus
+              };
+
+              if (!bestCandidate || candidate.score > bestCandidate.score) {
+                bestCandidate = candidate;
+              }
+              if (passes && (!bestPassingCandidate || candidate.score > bestPassingCandidate.score)) {
+                bestPassingCandidate = candidate;
+              }
+            });
           });
         });
       });
-    });
 
-    const chosen = bestPassingCandidate || bestCandidate;
-    if (!chosen) {
-      autoTuneStatus.textContent = "Auto-tune status: no candidates evaluated.";
-      return;
+      const chosen = bestPassingCandidate || bestCandidate;
+      if (!chosen) {
+        return { error: "Auto-tune status: no candidates evaluated." };
+      }
+
+      return {
+        candidate: chosen,
+        status: chosen.passes
+          ? `Auto-tune status: found passing settings for ${labels.getProfileLabel(profileMode)} — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`
+          : `Auto-tune status: no passing settings found; applied closest candidate — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`
+      };
     }
-
-    modeInput.value = chosen.mode;
-    adjustmentStrengthInput.value = String(chosen.strength);
-    bonusDivisorInput.value = String(chosen.scale);
-    useUnderdogInput.checked = chosen.mode === "optimistic" ? chosen.useUnderdog : false;
-
-    autoTuneStatus.textContent = chosen.passes
-      ? `Auto-tune status: found passing settings for ${getProfileLabel(profileMode)} — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`
-      : `Auto-tune status: no passing settings found; applied closest candidate — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`;
-
-    render();
   };
 
-  const render = () => {
-    const profileMode = profileModeInput.value;
-    const mode = modeInput.value;
-    const referenceMode = referenceModeInput.value;
-    const adjustmentStrength = Math.max(0, Number(adjustmentStrengthInput.value) || 0);
-    const bonusDivisor = Math.max(1, Number(bonusDivisorInput.value) || 1);
-    const useUnderdog = useUnderdogInput.checked;
+  const app = {
+    state: stateManager.createInitialState(),
+    players: [],
+    ratingContext: null,
+    rawSorted: [],
 
-    modeHint.textContent = getModeHint(mode, referenceMode, profileMode);
-    useUnderdogInput.disabled = mode !== "optimistic";
-    if (mode !== "optimistic") {
-      useUnderdogInput.checked = false;
-    }
+    isAUorNZ(value) {
+      const text = (value || "").toLowerCase();
+      return text.includes("australia") || text.includes("new zealand") || text === "au" || text === "nz";
+    },
 
-    const enriched = buildEnriched(mode, adjustmentStrength, bonusDivisor, mode === "optimistic" ? useUnderdog : false);
+    computeDerived() {
+      const normalizedUseUnderdog = this.state.mode === "optimistic" ? this.state.useUnderdog : false;
+      const enriched = rankingEngine.buildEnriched(
+        this.players,
+        this.ratingContext,
+        this.state.mode,
+        this.state.strength,
+        this.state.scale,
+        normalizedUseUnderdog
+      );
 
-    const reference = buildReference(referenceMode, enriched);
-    winPctHeader.innerHTML = `${reference.label} <span class="help" aria-hidden="true" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">?</span>`;
-    winPctHeader.title = `Chance of beating the selected ${reference.label.replace("Vs ", "").toLowerCase()} reference opponent, using displayed skill and combined uncertainty.`;
+      const reference = rankingEngine.buildReference(this.state.referenceMode, enriched);
+      const winProb = rankingEngine.createWinProbability(reference);
+      const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+      const sorted = fullSorted.slice(0, CONFIG.topN);
+      const metrics = diagnosticsEngine.computeMetrics(this.players, enriched, this.rawSorted, fullSorted);
+      const { tierMap, gradeMap } = rankingEngine.buildTierMaps(sorted);
+      const heat = rankingEngine.createHeatFunction(enriched);
 
-    const winProb = (skill, rd) => {
-      const combinedRd = Math.sqrt((rd * rd) + (reference.rd * reference.rd));
-      const z = (skill - reference.skill) / Math.max(1, combinedRd);
-      return normalCdf(z);
-    };
+      return { enriched, reference, winProb, fullSorted, sorted, metrics, tierMap, gradeMap, heat };
+    },
 
-    const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
-    const sorted = fullSorted.slice(0, TOP_N);
-    const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
-    renderDiagnostics(metrics, mode, profileMode);
+    render() {
+      stateManager.syncStateToControls(this.state);
+      const derived = this.computeDerived();
+      ui.render(this.state, derived);
+      this.state.useUnderdog = this.state.mode === "optimistic" ? this.state.useUnderdog : false;
+      stateManager.syncStateToControls(this.state);
+    },
 
-    const tiers = Array.from({ length: BASE_TIERS }, () => []);
-    sorted.forEach((p, i) => {
-      const idx = Math.min(BASE_TIERS - 1, Math.floor((i / sorted.length) * BASE_TIERS));
-      tiers[idx].push(p);
-    });
+    setIdleStatus() {
+      this.state.autoTuneStatus = "Auto-tune status: idle.";
+      ui.updateStatus(this.state.autoTuneStatus);
+    },
 
-    const tierMap = new Map();
-    tiers.forEach((t, i) => t.forEach(p => tierMap.set(p.athlete, getTierLabel(i))));
+    applyProfileChange() {
+      this.setIdleStatus();
+      stateManager.readControlsIntoState(this.state);
+      stateManager.syncControlsToProfile(this.state, this.state.profileMode);
+      this.render();
+    },
 
-    const gradeMap = new Map();
-    tiers.forEach(tier => {
-      if (!tier.length) return;
-      const min = Math.min(...tier.map(p => p.skill));
-      const max = Math.max(...tier.map(p => p.skill));
-      tier.forEach(p => {
-        const z = (p.skill - min) / ((max - min) || 1);
-        let g = "";
-        if (z > 0.66) g = "+";
-        else if (z < 0.33) g = "-";
-        gradeMap.set(p.athlete, g);
+    applyProfileDefaults() {
+      stateManager.readControlsIntoState(this.state);
+      if (stateManager.syncControlsToProfile(this.state, this.state.profileMode)) {
+        this.state.autoTuneStatus = `Auto-tune status: applied ${labels.getProfileLabel(this.state.profileMode)} defaults.`;
+      } else {
+        this.state.autoTuneStatus = "Auto-tune status: custom profile has no stored defaults.";
+      }
+      this.render();
+    },
+
+    applyModeChange() {
+      const selectedMode = dom.modeInput.value;
+      if (this.state.profileMode === "custom") {
+        stateManager.applyModeDefaults(this.state, selectedMode);
+      } else {
+        this.state.mode = selectedMode;
+      }
+      this.setIdleStatus();
+      this.render();
+    },
+
+    applyManualControlChange() {
+      stateManager.readControlsIntoState(this.state);
+      stateManager.markProfileCustom(this.state);
+      this.setIdleStatus();
+      this.render();
+    },
+
+    autoTune() {
+      stateManager.readControlsIntoState(this.state);
+      const result = autoTuneEngine.chooseCandidate(this.state, this.players, this.rawSorted, this.ratingContext);
+
+      if (result.error) {
+        this.state.autoTuneStatus = result.error;
+        this.render();
+        return;
+      }
+
+      this.state.mode = result.candidate.mode;
+      this.state.strength = result.candidate.strength;
+      this.state.scale = result.candidate.scale;
+      this.state.useUnderdog = result.candidate.mode === "optimistic" ? result.candidate.useUnderdog : false;
+      this.state.autoTuneStatus = result.status;
+      this.render();
+    },
+
+    bindEvents() {
+      dom.profileModeInput.addEventListener("change", () => this.applyProfileChange());
+      dom.applyProfileDefaultsButton.addEventListener("click", () => this.applyProfileDefaults());
+      dom.autoTuneDiagnosticsButton.addEventListener("click", () => this.autoTune());
+      dom.modeInput.addEventListener("change", () => this.applyModeChange());
+
+      [dom.adjustmentStrengthInput, dom.bonusDivisorInput, dom.useUnderdogInput, dom.referenceModeInput].forEach(el => {
+        el.addEventListener("input", () => this.applyManualControlChange());
+        el.addEventListener("change", () => this.applyManualControlChange());
       });
-    });
+    },
 
-    const vals = enriched.map(d => d.skill);
-    const minS = Math.min(...vals);
-    const maxS = Math.max(...vals);
-    const heat = (v) => {
-      const t = (v - minS) / ((maxS - minS) || 1);
-      return `rgba(${255 * (1 - t) | 0},${200 * t | 0},120,0.25)`;
-    };
+    async loadPlayers() {
+      let players = [];
+      try {
+        const res = await fetch(CONFIG.dataUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        players = await res.json();
+      } catch (err) {
+        console.error("Failed to load player data:", err);
+        ui.showError("Failed to load player data. Check the API endpoint / CORS settings.");
+        return false;
+      }
 
-    tbody.innerHTML = "";
-    sorted.forEach((p, i) => {
-      const tier = tierMap.get(p.athlete);
-      const grade = gradeMap.get(p.athlete);
-      const tr = document.createElement("tr");
-      tr.style.background = heat(p.skill);
-      tr.innerHTML =
-        `<td>${i + 1}</td>` +
-        `<td>${tier}${grade}</td>` +
-        `<td>${p.athlete}</td>` +
-        `<td>${p.club}</td>` +
-        `<td>${(p.rating ?? 0).toFixed(1)}</td>` +
-        `<td>${formatChange(p.change ?? 0)}</td>` +
-        `<td>${(p.skill ?? 0).toFixed(2)}</td>` +
-        `<td>${(p.sigma ?? 0).toFixed(1)}</td>` +
-        `<td>${(winProb(p.skill, p.sigma) * 100).toFixed(1)}%</td>`;
-      tbody.appendChild(tr);
-    });
+      this.players = players.filter(p => this.isAUorNZ(p.nationality));
+
+      if (!this.players.length) {
+        ui.showError("No AU/NZ players found.");
+        return false;
+      }
+
+      const ratingValues = this.players.map(p => p.rating || 0);
+      this.ratingContext = {
+        meanRating: stats.mean(ratingValues),
+        medianRating: stats.median(ratingValues)
+      };
+      this.rawSorted = this.players.slice().sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      return true;
+    },
+
+    async init() {
+      this.bindEvents();
+
+      if (this.state.profileMode === "custom") {
+        stateManager.applyModeDefaults(this.state, this.state.mode);
+      } else {
+        stateManager.syncControlsToProfile(this.state, this.state.profileMode);
+      }
+
+      const loaded = await this.loadPlayers();
+      if (!loaded) return;
+
+      this.render();
+    }
   };
 
-  profileModeInput.addEventListener("change", () => {
-    autoTuneStatus.textContent = "Auto-tune status: idle.";
-    syncControlsToProfile(profileModeInput.value);
-    render();
-  });
-
-  applyProfileDefaultsButton.addEventListener("click", () => {
-    if (syncControlsToProfile(profileModeInput.value)) {
-      autoTuneStatus.textContent = `Auto-tune status: applied ${getProfileLabel(profileModeInput.value)} defaults.`;
-    } else {
-      autoTuneStatus.textContent = "Auto-tune status: custom profile has no stored defaults.";
-    }
-    render();
-  });
-
-  autoTuneDiagnosticsButton.addEventListener("click", autoTuneDiagnostics);
-
-  modeInput.addEventListener("change", () => {
-    if (profileModeInput.value === "custom") {
-      applyModeDefaults(modeInput.value);
-    }
-    autoTuneStatus.textContent = "Auto-tune status: idle.";
-    render();
-  });
-
-  [adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput, referenceModeInput].forEach(el => {
-    el.addEventListener("input", () => {
-      markProfileCustom();
-      autoTuneStatus.textContent = "Auto-tune status: idle.";
-      render();
-    });
-    el.addEventListener("change", () => {
-      markProfileCustom();
-      autoTuneStatus.textContent = "Auto-tune status: idle.";
-      render();
-    });
-  });
-
-  if (profileModeInput.value === "custom") {
-    applyModeDefaults(modeInput.value);
-  } else {
-    syncControlsToProfile(profileModeInput.value);
-  }
-  render();
-
+  await app.init();
 })();
 
 </script>
