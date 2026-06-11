@@ -651,12 +651,13 @@ tr:nth-child(even){background:#121621;}
       const { strengths, scales } = getSearchRanges(candidateMode);
       strengths.forEach(strength => {
         scales.forEach(scale => {
-          const enriched = buildEnriched(candidateMode, strength, scale, useUnderdog);
+          const candidateUseUnderdog = candidateMode === "optimistic" ? useUnderdog : false;
+          const enriched = buildEnriched(candidateMode, strength, scale, candidateUseUnderdog);
           const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
           const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
           const passes = evaluateProfilePass(metrics, candidateMode, profileMode);
           const score = scoreCandidate(metrics, candidateMode, profileMode);
-          const candidate = { mode: candidateMode, strength, scale, metrics, passes, score };
+          const candidate = { mode: candidateMode, strength, scale, useUnderdog: candidateUseUnderdog, metrics, passes, score };
 
           if (!bestCandidate || candidate.score > bestCandidate.score) {
             bestCandidate = candidate;
@@ -677,6 +678,7 @@ tr:nth-child(even){background:#121621;}
     modeInput.value = chosen.mode;
     adjustmentStrengthInput.value = String(chosen.strength);
     bonusDivisorInput.value = String(chosen.scale);
+    useUnderdogInput.checked = chosen.mode === "optimistic" ? chosen.useUnderdog : false;
 
     autoTuneStatus.textContent = chosen.passes
       ? `Auto-tune status: found passing settings for ${getProfileLabel(profileMode)} — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`
@@ -695,8 +697,11 @@ tr:nth-child(even){background:#121621;}
 
     modeHint.textContent = getModeHint(mode, referenceMode, profileMode);
     useUnderdogInput.disabled = mode !== "optimistic";
+    if (mode !== "optimistic") {
+      useUnderdogInput.checked = false;
+    }
 
-    const enriched = buildEnriched(mode, adjustmentStrength, bonusDivisor, useUnderdog);
+    const enriched = buildEnriched(mode, adjustmentStrength, bonusDivisor, mode === "optimistic" ? useUnderdog : false);
 
     const reference = buildReference(referenceMode, enriched);
     winPctHeader.innerHTML = `${reference.label} <span class="help" aria-hidden="true" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">?</span>`;
