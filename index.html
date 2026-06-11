@@ -112,7 +112,7 @@ tr:nth-child(even){background:#121621;}
   <div class="diagnostics-grid" id="diagnosticsGrid"></div>
   <div class="profile-summary" id="profileSummary"></div>
   <div class="status" id="autoTuneStatus">Auto-tune status: idle.</div>
-  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile now aims to produce a credible alternative ordering rather than a near-copy of the raw leaderboard.</div>
+  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile now aims to produce a credible alternative ordering rather than a near-copy of published ratings.</div>
 </div>
 
 <table>
@@ -374,6 +374,12 @@ tr:nth-child(even){background:#121621;}
     referenceModeInput.value = defaults.referenceMode;
   };
 
+  const syncControlsToProfile = (profileMode) => {
+    if (profileMode === "custom") return false;
+    applyProfileDefaults(profileMode);
+    return true;
+  };
+
   const markProfileCustom = () => {
     if (profileModeInput.value !== "custom") {
       profileModeInput.value = "custom";
@@ -448,6 +454,7 @@ tr:nth-child(even){background:#121621;}
       const underMovementPenalty = Math.max(0, 2 - metrics.medianAbsRankShift) * 220 + Math.max(0, 12 - metrics.p90AbsChange) * 16;
       const overMovementPenalty = Math.max(0, metrics.avgTop8Shift - 6.5) * 100 + Math.max(0, metrics.maxAbsChange - 100) * 6;
       const orderCompressionPenalty = Math.max(0, metrics.spearman - 0.975) * 3000;
+      const optimisticBiasPenalty = mode === "optimistic" ? 75 : 0;
       return passBonus +
         metrics.top16Overlap * 90 +
         metrics.top8Overlap * 40 +
@@ -458,6 +465,7 @@ tr:nth-child(even){background:#121621;}
         underMovementPenalty -
         overMovementPenalty -
         orderCompressionPenalty -
+        optimisticBiasPenalty -
         metrics.highRdEntrantsTop16 * 60;
     }
 
@@ -626,23 +634,23 @@ tr:nth-child(even){background:#121621;}
 
   const autoTuneDiagnostics = () => {
     const profileMode = profileModeInput.value;
-    const mode = modeInput.value;
-    const useUnderdog = useUnderdogInput.checked;
+    const selectedMode = modeInput.value;
+    const selectedUseUnderdog = useUnderdogInput.checked;
 
     if (profileMode === "custom") {
       autoTuneStatus.textContent = "Auto-tune status: select Seeding or Local ranking first.";
       return;
     }
 
-    if (mode === "raw") {
+    if (selectedMode === "raw" && profileMode === "seeding") {
       autoTuneStatus.textContent = "Auto-tune status: Raw mode has no strength/scale tuning to perform.";
       render();
       return;
     }
 
     const candidateModes = profileMode === "local"
-      ? [mode, ...(mode === "optimistic" ? ["balanced"] : mode === "balanced" ? ["optimistic"] : ["balanced", "optimistic"])]
-      : [mode];
+      ? ["balanced", "optimistic"]
+      : [selectedMode];
 
     let bestCandidate = null;
     let bestPassingCandidate = null;
@@ -651,20 +659,32 @@ tr:nth-child(even){background:#121621;}
       const { strengths, scales } = getSearchRanges(candidateMode);
       strengths.forEach(strength => {
         scales.forEach(scale => {
-          const candidateUseUnderdog = candidateMode === "optimistic" ? useUnderdog : false;
-          const enriched = buildEnriched(candidateMode, strength, scale, candidateUseUnderdog);
-          const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
-          const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
-          const passes = evaluateProfilePass(metrics, candidateMode, profileMode);
-          const score = scoreCandidate(metrics, candidateMode, profileMode);
-          const candidate = { mode: candidateMode, strength, scale, useUnderdog: candidateUseUnderdog, metrics, passes, score };
+          const underdogOptions = candidateMode === "optimistic" ? [false, true] : [false];
+          underdogOptions.forEach(candidateUseUnderdog => {
+            const enriched = buildEnriched(candidateMode, strength, scale, candidateUseUnderdog);
+            const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+            const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
+            const passes = evaluateProfilePass(metrics, candidateMode, profileMode);
+            const score = scoreCandidate(metrics, candidateMode, profileMode);
+            const modePreferenceBonus = profileMode === "local" && candidateMode === selectedMode ? 15 : 0;
+            const underdogPreferenceBonus = profileMode === "local" && candidateMode === "optimistic" && candidateUseUnderdog === selectedUseUnderdog ? 5 : 0;
+            const candidate = {
+              mode: candidateMode,
+              strength,
+              scale,
+              useUnderdog: candidateUseUnderdog,
+              metrics,
+              passes,
+              score: score + modePreferenceBonus + underdogPreferenceBonus
+            };
 
-          if (!bestCandidate || candidate.score > bestCandidate.score) {
-            bestCandidate = candidate;
-          }
-          if (passes && (!bestPassingCandidate || candidate.score > bestPassingCandidate.score)) {
-            bestPassingCandidate = candidate;
-          }
+            if (!bestCandidate || candidate.score > bestCandidate.score) {
+              bestCandidate = candidate;
+            }
+            if (passes && (!bestPassingCandidate || candidate.score > bestPassingCandidate.score)) {
+              bestPassingCandidate = candidate;
+            }
+          });
         });
       });
     });
@@ -771,12 +791,16 @@ tr:nth-child(even){background:#121621;}
 
   profileModeInput.addEventListener("change", () => {
     autoTuneStatus.textContent = "Auto-tune status: idle.";
+    syncControlsToProfile(profileModeInput.value);
     render();
   });
 
   applyProfileDefaultsButton.addEventListener("click", () => {
-    applyProfileDefaults(profileModeInput.value);
-    autoTuneStatus.textContent = `Auto-tune status: applied ${getProfileLabel(profileModeInput.value)} defaults.`;
+    if (syncControlsToProfile(profileModeInput.value)) {
+      autoTuneStatus.textContent = `Auto-tune status: applied ${getProfileLabel(profileModeInput.value)} defaults.`;
+    } else {
+      autoTuneStatus.textContent = "Auto-tune status: custom profile has no stored defaults.";
+    }
     render();
   });
 
@@ -803,7 +827,11 @@ tr:nth-child(even){background:#121621;}
     });
   });
 
-  applyModeDefaults(modeInput.value);
+  if (profileModeInput.value === "custom") {
+    applyModeDefaults(modeInput.value);
+  } else {
+    syncControlsToProfile(profileModeInput.value);
+  }
   render();
 
 })();
