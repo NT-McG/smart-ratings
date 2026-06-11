@@ -18,6 +18,17 @@ tr:nth-child(even){background:#121621;}
 .negative{color:#ff7b72;font-weight:600;}
 .neutral{color:#aeb7c6;}
 .help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #4b5565;color:#aeb7c6;font-size:11px;cursor:help;line-height:1;vertical-align:middle;margin-left:4px;}
+.diagnostics{margin:16px 0 20px;padding:14px;background:#121621;border:1px solid #2a2f3a;border-radius:6px;}
+.diagnostics h3{margin:0 0 10px;font-size:16px;}
+.diagnostics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;margin-bottom:12px;}
+.metric{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #222938;padding:4px 0;}
+.metric-name{color:#aeb7c6;}
+.profile-summary{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
+.badge{padding:4px 8px;border-radius:999px;border:1px solid #2a2f3a;font-size:12px;font-weight:600;}
+.badge.pass{color:#7ee787;border-color:#2f6f3e;background:rgba(46,160,67,0.12);}
+.badge.fail{color:#ff7b72;border-color:#8b2d2a;background:rgba(248,81,73,0.12);}
+.badge.neutral{color:#aeb7c6;background:#161b22;}
+.small{font-size:12px;color:#aeb7c6;}
 </style>
 </head>
 
@@ -38,6 +49,7 @@ tr:nth-child(even){background:#121621;}
   <li><strong>Scale</strong> controls how quickly the optimistic uncertainty bonus ramps up.</li>
   <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
   <li><strong>Vs Median</strong> estimates the chance of beating a synthetic reference fencer built from the selected comparison pool, using both displayed skill and both sides’ uncertainty.</li>
+  <li><strong>Diagnostics</strong> score the current settings against objective leaderboard stability and local-ranking guardrails.</li>
   <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
   <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
   <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
@@ -56,7 +68,7 @@ tr:nth-child(even){background:#121621;}
   </label>
   <label>
     Strength
-    <input id="adjustmentStrength" type="number" min="0" max="1000" step="1" value="35" />
+    <input id="adjustmentStrength" type="number" min="0" max="1000" step="0.05" value="35" />
   </label>
   <label>
     Scale
@@ -78,6 +90,13 @@ tr:nth-child(even){background:#121621;}
 </div>
 <div class="hint" id="modeHint">
   Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Vs Median estimates performance against the selected reference pool using both skill and uncertainty.
+</div>
+
+<div class="diagnostics" id="diagnostics">
+  <h3>Diagnostics</h3>
+  <div class="diagnostics-grid" id="diagnosticsGrid"></div>
+  <div class="profile-summary" id="profileSummary"></div>
+  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile allows more movement, but still limits RD-driven distortion.</div>
 </div>
 
 <table>
@@ -111,6 +130,30 @@ tr:nth-child(even){background:#121621;}
     balanced: 1.5,
     optimistic: 35
   };
+  const SEEDING_THRESHOLDS = {
+    spearman: 0.95,
+    top8Overlap: 7,
+    top16Overlap: 13,
+    avgTop8Shift: 2.0,
+    p90AbsChange: 25,
+    maxAbsChange: 40,
+    highRdEntrantsTop16: 1,
+    top16PairRetention: 0.85
+  };
+  const LOCAL_THRESHOLDS = {
+    spearman: 0.88,
+    top8Overlap: 6,
+    top16Overlap: 11,
+    avgTop8Shift: 4.0,
+    p90AbsChange: 45,
+    maxAbsChange: 70,
+    highRdEntrantsTop16: 3,
+    spreadMin: 0.95,
+    spreadMax: 1.35,
+    optimisticCorrMin: 0.35,
+    optimisticCorrMax: 0.65,
+    balancedCorrAbsMax: 0.35
+  };
 
   const tbody = document.getElementById("b");
   const modeInput = document.getElementById("mode");
@@ -120,6 +163,8 @@ tr:nth-child(even){background:#121621;}
   const referenceModeInput = document.getElementById("referenceMode");
   const modeHint = document.getElementById("modeHint");
   const winPctHeader = document.getElementById("winPctHeader");
+  const diagnosticsGrid = document.getElementById("diagnosticsGrid");
+  const profileSummary = document.getElementById("profileSummary");
 
   const getTierLabel = (index) => {
     if (index < BASE_TIER_LABELS.length) return BASE_TIER_LABELS[index];
@@ -137,14 +182,69 @@ tr:nth-child(even){background:#121621;}
     if (!values.length) return 0;
     const sorted = values.slice().sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2
-      ? sorted[mid]
-      : (sorted[mid - 1] + sorted[mid]) / 2;
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   };
 
   const mean = (values) => {
     if (!values.length) return 0;
     return values.reduce((a, b) => a + b, 0) / values.length;
+  };
+
+  const percentile = (values, p) => {
+    if (!values.length) return 0;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const index = (sorted.length - 1) * p;
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    if (lower === upper) return sorted[lower];
+    const weight = index - lower;
+    return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+  };
+
+  const standardDeviation = (values) => {
+    if (!values.length) return 0;
+    const avg = mean(values);
+    return Math.sqrt(mean(values.map(v => (v - avg) ** 2)));
+  };
+
+  const correlation = (xs, ys) => {
+    if (xs.length !== ys.length || !xs.length) return 0;
+    const meanX = mean(xs);
+    const meanY = mean(ys);
+    let num = 0;
+    let denX = 0;
+    let denY = 0;
+    for (let i = 0; i < xs.length; i++) {
+      const dx = xs[i] - meanX;
+      const dy = ys[i] - meanY;
+      num += dx * dy;
+      denX += dx * dx;
+      denY += dy * dy;
+    }
+    if (!denX || !denY) return 0;
+    return num / Math.sqrt(denX * denY);
+  };
+
+  const rankMapFromSorted = (sorted, key = "athlete") => {
+    const map = new Map();
+    sorted.forEach((p, i) => map.set(p[key], i + 1));
+    return map;
+  };
+
+  const spearmanFromRankMaps = (items, rawRanks, transformedRanks) => {
+    const n = items.length;
+    if (n < 2) return 1;
+    let sumD2 = 0;
+    items.forEach(p => {
+      const d = (rawRanks.get(p.athlete) || 0) - (transformedRanks.get(p.athlete) || 0);
+      sumD2 += d * d;
+    });
+    return 1 - (6 * sumD2) / (n * (n * n - 1));
+  };
+
+  const overlapCount = (a, b) => {
+    const setB = new Set(b);
+    return a.filter(x => setB.has(x)).length;
   };
 
   const normalCdf = (x) => {
@@ -193,13 +293,8 @@ tr:nth-child(even){background:#121621;}
     const rds = enriched.map(p => p.sigma);
 
     if (referenceMode === "mean") {
-      return {
-        label: "Vs Mean",
-        skill: mean(skills),
-        rd: Math.max(1, mean(rds))
-      };
+      return { label: "Vs Mean", skill: mean(skills), rd: Math.max(1, mean(rds)) };
     }
-
     if (referenceMode === "top16") {
       const top = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, Math.min(16, enriched.length));
       return {
@@ -208,21 +303,11 @@ tr:nth-child(even){background:#121621;}
         rd: Math.max(1, mean(top.map(p => p.sigma)))
       };
     }
-
     if (referenceMode === "top1") {
       const top = enriched.slice().sort((a, b) => b.skill - a.skill)[0];
-      return {
-        label: "Vs #1",
-        skill: top?.skill ?? 0,
-        rd: Math.max(1, top?.sigma ?? 1)
-      };
+      return { label: "Vs #1", skill: top?.skill ?? 0, rd: Math.max(1, top?.sigma ?? 1) };
     }
-
-    return {
-      label: "Vs Median",
-      skill: median(skills),
-      rd: Math.max(1, median(rds))
-    };
+    return { label: "Vs Median", skill: median(skills), rd: Math.max(1, median(rds)) };
   };
 
   const applyModeDefaults = (mode) => {
@@ -230,42 +315,142 @@ tr:nth-child(even){background:#121621;}
     adjustmentStrengthInput.value = String(defaultStrength);
   };
 
-  // ======================
-  // FILTER
-  // ======================
+  const metricRow = (name, value) => `<div class="metric"><span class="metric-name">${name}</span><span>${value}</span></div>`;
+  const badge = (label, ok) => `<span class="badge ${ok ? "pass" : "fail"}">${label}: ${ok ? "PASS" : "FAIL"}</span>`;
+  const neutralBadge = (label, value) => `<span class="badge neutral">${label}: ${value}</span>`;
+
+  const renderDiagnostics = (metrics, mode) => {
+    diagnosticsGrid.innerHTML = [
+      metricRow("Spearman ρ", metrics.spearman.toFixed(3)),
+      metricRow("Top 8 overlap", `${metrics.top8Overlap}/8`),
+      metricRow("Top 16 overlap", `${metrics.top16Overlap}/16`),
+      metricRow("Avg top-8 rank shift", metrics.avgTop8Shift.toFixed(2)),
+      metricRow("P90 |change|", metrics.p90AbsChange.toFixed(1)),
+      metricRow("Max |change|", metrics.maxAbsChange.toFixed(1)),
+      metricRow("RD-change corr", metrics.rdChangeCorr.toFixed(3)),
+      metricRow("High-RD entrants in top 16", String(metrics.highRdEntrantsTop16)),
+      metricRow("Top-50 spread ratio", metrics.top50SpreadRatio.toFixed(3)),
+      metricRow("Top-16 pair retention", metrics.top16PairRetention.toFixed(3))
+    ].join("");
+
+    const seedingPass = (
+      metrics.spearman >= SEEDING_THRESHOLDS.spearman &&
+      metrics.top8Overlap >= SEEDING_THRESHOLDS.top8Overlap &&
+      metrics.top16Overlap >= SEEDING_THRESHOLDS.top16Overlap &&
+      metrics.avgTop8Shift <= SEEDING_THRESHOLDS.avgTop8Shift &&
+      metrics.p90AbsChange <= SEEDING_THRESHOLDS.p90AbsChange &&
+      metrics.maxAbsChange <= SEEDING_THRESHOLDS.maxAbsChange &&
+      metrics.highRdEntrantsTop16 <= SEEDING_THRESHOLDS.highRdEntrantsTop16 &&
+      metrics.top16PairRetention >= SEEDING_THRESHOLDS.top16PairRetention
+    );
+
+    const corrConstraintPass = mode === "optimistic"
+      ? metrics.rdChangeCorr >= LOCAL_THRESHOLDS.optimisticCorrMin && metrics.rdChangeCorr <= LOCAL_THRESHOLDS.optimisticCorrMax
+      : mode === "balanced"
+        ? Math.abs(metrics.rdChangeCorr) <= LOCAL_THRESHOLDS.balancedCorrAbsMax
+        : true;
+
+    const localPass = (
+      metrics.spearman >= LOCAL_THRESHOLDS.spearman &&
+      metrics.top8Overlap >= LOCAL_THRESHOLDS.top8Overlap &&
+      metrics.top16Overlap >= LOCAL_THRESHOLDS.top16Overlap &&
+      metrics.avgTop8Shift <= LOCAL_THRESHOLDS.avgTop8Shift &&
+      metrics.p90AbsChange <= LOCAL_THRESHOLDS.p90AbsChange &&
+      metrics.maxAbsChange <= LOCAL_THRESHOLDS.maxAbsChange &&
+      metrics.highRdEntrantsTop16 <= LOCAL_THRESHOLDS.highRdEntrantsTop16 &&
+      metrics.top50SpreadRatio >= LOCAL_THRESHOLDS.spreadMin &&
+      metrics.top50SpreadRatio <= LOCAL_THRESHOLDS.spreadMax &&
+      corrConstraintPass
+    );
+
+    const corrBadgeLabel = mode === "optimistic"
+      ? `RD corr target ${LOCAL_THRESHOLDS.optimisticCorrMin}-${LOCAL_THRESHOLDS.optimisticCorrMax}`
+      : mode === "balanced"
+        ? `|RD corr| ≤ ${LOCAL_THRESHOLDS.balancedCorrAbsMax}`
+        : "RD corr unrestricted";
+
+    profileSummary.innerHTML = [
+      badge("Seeding profile", seedingPass),
+      badge("Local ranking profile", localPass),
+      neutralBadge("Mode", mode),
+      neutralBadge("RD guardrail", corrBadgeLabel)
+    ].join("");
+  };
+
+  const computeMetrics = (players, enriched, rawSorted, transformedSorted) => {
+    const rawRanks = rankMapFromSorted(rawSorted);
+    const transformedRanks = rankMapFromSorted(transformedSorted);
+    const rawTop8 = rawSorted.slice(0, 8).map(p => p.athlete);
+    const rawTop16 = rawSorted.slice(0, 16).map(p => p.athlete);
+    const transformedTop8 = transformedSorted.slice(0, 8).map(p => p.athlete);
+    const transformedTop16 = transformedSorted.slice(0, 16).map(p => p.athlete);
+    const changeValues = enriched.map(p => Math.abs(p.change));
+    const rdValues = enriched.map(p => p.sigma);
+    const signedChanges = enriched.map(p => p.change);
+    const rd75 = percentile(rdValues, 0.75);
+    const top16Entrants = transformedSorted.slice(0, 16).filter(p => !rawTop16.includes(p.athlete));
+    const highRdEntrantsTop16 = top16Entrants.filter(p => p.sigma > rd75).length;
+    const rawTop8Players = rawSorted.slice(0, 8);
+    const avgTop8Shift = mean(rawTop8Players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0))));
+    const top50Raw = rawSorted.slice(0, Math.min(50, rawSorted.length)).map(p => p.rating);
+    const top50Transformed = transformedSorted.slice(0, Math.min(50, transformedSorted.length)).map(p => p.skill);
+    const top50SpreadRatio = standardDeviation(top50Transformed) / Math.max(1e-9, standardDeviation(top50Raw));
+
+    const rawTop16Players = rawSorted.slice(0, Math.min(16, rawSorted.length));
+    let preservedPairs = 0;
+    let totalPairs = 0;
+    for (let i = 0; i < rawTop16Players.length; i++) {
+      for (let j = i + 1; j < rawTop16Players.length; j++) {
+        totalPairs += 1;
+        const a = rawTop16Players[i].athlete;
+        const b = rawTop16Players[j].athlete;
+        if ((transformedRanks.get(a) || Infinity) < (transformedRanks.get(b) || Infinity)) {
+          preservedPairs += 1;
+        }
+      }
+    }
+
+    return {
+      spearman: spearmanFromRankMaps(players, rawRanks, transformedRanks),
+      top8Overlap: overlapCount(rawTop8, transformedTop8),
+      top16Overlap: overlapCount(rawTop16, transformedTop16),
+      avgTop8Shift,
+      p90AbsChange: percentile(changeValues, 0.9),
+      maxAbsChange: Math.max(...changeValues, 0),
+      rdChangeCorr: correlation(rdValues, signedChanges),
+      highRdEntrantsTop16,
+      top50SpreadRatio,
+      top16PairRetention: totalPairs ? preservedPairs / totalPairs : 1
+    };
+  };
+
   const isAUorNZ = (t) => {
     t = (t || "").toLowerCase();
     return t.includes("australia") || t.includes("new zealand") || t === "au" || t === "nz";
   };
 
-  // ======================
-  // FETCH TABLE
-  // ======================
   let players = [];
   try {
     const res = await fetch("https://icy-term-5678.nt-mcguigan.workers.dev");
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     players = await res.json();
   } catch (err) {
     console.error("Failed to load player data:", err);
-    tbody.innerHTML =
-      `<tr><td colspan="9">Failed to load player data. Check the API endpoint / CORS settings.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">Failed to load player data. Check the API endpoint / CORS settings.</td></tr>`;
     return;
   }
- 
+
   players = players.filter(p => isAUorNZ(p.nationality));
 
   if (!players.length) {
-    tbody.innerHTML =
-      `<tr><td colspan="9">No AU/NZ players found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">No AU/NZ players found.</td></tr>`;
     return;
   }
-  
+
   const ratingValues = players.map(p => p.rating || 0);
   const meanRating = mean(ratingValues);
   const medianRating = median(ratingValues);
+  const rawSorted = players.slice().sort((a, b) => (b.rating || 0) - (a.rating || 0));
 
   const render = () => {
     const mode = modeInput.value;
@@ -277,13 +462,9 @@ tr:nth-child(even){background:#121621;}
     modeHint.textContent = getModeHint(mode, referenceMode);
     useUnderdogInput.disabled = mode !== "optimistic";
 
-    // ======================
-    // SKILL MODEL
-    // ======================
     const enriched = players.map(p => {
       const rating = p.rating || 0;
       const rd = p.confidence || 0;
-
       let skill = rating;
 
       if (mode === "conservative") {
@@ -294,12 +475,10 @@ tr:nth-child(even){background:#121621;}
         skill = medianRating + (rating - medianRating) * weight;
       } else if (mode === "optimistic") {
         let bonus = adjustmentStrength * Math.log1p(rd / bonusDivisor);
-
         if (useUnderdog) {
           const underdogFactor = Math.max(0.7, Math.min(1.5, 1 + (meanRating - rating) / 400));
           bonus *= underdogFactor;
         }
-
         skill = rating + bonus;
       }
 
@@ -312,90 +491,55 @@ tr:nth-child(even){background:#121621;}
     winPctHeader.innerHTML = `${reference.label} <span class="help" aria-hidden="true" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">?</span>`;
     winPctHeader.title = `Chance of beating the selected ${reference.label.replace("Vs ", "").toLowerCase()} reference opponent, using displayed skill and combined uncertainty.`;
 
-    // ======================
-    // PAIRWISE WIN PROBABILITY
-    // ======================
     const winProb = (skill, rd) => {
       const combinedRd = Math.sqrt((rd * rd) + (reference.rd * reference.rd));
       const z = (skill - reference.skill) / Math.max(1, combinedRd);
       return normalCdf(z);
     };
 
-    // ======================
-    // SORT BY SKILL
-    // ======================
-    const sorted = enriched.slice().sort((a,b)=>b.skill-a.skill).slice(0, TOP_N);
+    const sorted = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, TOP_N);
+    const metrics = computeMetrics(players, enriched, rawSorted, enriched.slice().sort((a, b) => b.skill - a.skill));
+    renderDiagnostics(metrics, mode);
 
-    // ======================
-    // QUANTILE TIERING
-    // ======================
     const tiers = Array.from({ length: BASE_TIERS }, () => []);
-
     sorted.forEach((p, i) => {
-      const idx = Math.min(
-        BASE_TIERS - 1,
-        Math.floor((i / sorted.length) * BASE_TIERS)
-      );
+      const idx = Math.min(BASE_TIERS - 1, Math.floor((i / sorted.length) * BASE_TIERS));
       tiers[idx].push(p);
     });
 
-    // ======================
-    // TIER LABELS
-    // ======================
     const tierMap = new Map();
+    tiers.forEach((t, i) => t.forEach(p => tierMap.set(p.athlete, getTierLabel(i))));
 
-    tiers.forEach((t,i)=>
-      t.forEach(p=>tierMap.set(p.athlete, getTierLabel(i)))
-    );
-
-    // ======================
-    // WITHIN-TIER GRADING (+ / -)
-    // ======================
     const gradeMap = new Map();
-
     tiers.forEach(tier => {
       if (!tier.length) return;
-
-      const min = Math.min(...tier.map(p=>p.skill));
-      const max = Math.max(...tier.map(p=>p.skill));
-
+      const min = Math.min(...tier.map(p => p.skill));
+      const max = Math.max(...tier.map(p => p.skill));
       tier.forEach(p => {
         const z = (p.skill - min) / ((max - min) || 1);
-
         let g = "";
         if (z > 0.66) g = "+";
         else if (z < 0.33) g = "-";
-
         gradeMap.set(p.athlete, g);
       });
     });
 
-    // ======================
-    // HEATMAP
-    // ======================
-    const vals = enriched.map(d=>d.skill);
+    const vals = enriched.map(d => d.skill);
     const minS = Math.min(...vals);
     const maxS = Math.max(...vals);
-
     const heat = (v) => {
       const t = (v - minS) / ((maxS - minS) || 1);
-      return `rgba(${255*(1-t)|0},${200*t|0},120,0.25)`;
+      return `rgba(${255 * (1 - t) | 0},${200 * t | 0},120,0.25)`;
     };
 
-    // ======================
-    // RENDER
-    // ======================
     tbody.innerHTML = "";
-
-    sorted.forEach((p,i)=>{
+    sorted.forEach((p, i) => {
       const tier = tierMap.get(p.athlete);
       const grade = gradeMap.get(p.athlete);
-
       const tr = document.createElement("tr");
       tr.style.background = heat(p.skill);
-
       tr.innerHTML =
-        `<td>${i+1}</td>` +
+        `<td>${i + 1}</td>` +
         `<td>${tier}${grade}</td>` +
         `<td>${p.athlete}</td>` +
         `<td>${p.club}</td>` +
@@ -403,8 +547,7 @@ tr:nth-child(even){background:#121621;}
         `<td>${formatChange(p.change ?? 0)}</td>` +
         `<td>${(p.skill ?? 0).toFixed(2)}</td>` +
         `<td>${(p.sigma ?? 0).toFixed(1)}</td>` +
-        `<td>${(winProb(p.skill, p.sigma)*100).toFixed(1)}%</td>`;
-
+        `<td>${(winProb(p.skill, p.sigma) * 100).toFixed(1)}%</td>`;
       tbody.appendChild(tr);
     });
   };
