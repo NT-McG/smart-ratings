@@ -19,7 +19,7 @@ tr:nth-child(even){background:#121621;}
 .positive{color:#7ee787;font-weight:600;}
 .negative{color:#ff7b72;font-weight:600;}
 .neutral{color:#aeb7c6;}
-.help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #4b5565;color:#aeb7c6;font-size:11px;cursor:help;line-height:1;vertical-align:middle;margin-left:4px;}
+.help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #4b5565;color:#aeb7c6;font-size:11px;cursor:help;line-height:1;vertical-align:middle;}
 .diagnostics{margin:16px 0 20px;padding:14px;background:#121621;border:1px solid #2a2f3a;border-radius:6px;}
 .diagnostics h3{margin:0 0 10px;font-size:16px;}
 .diagnostics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;margin-bottom:12px;}
@@ -104,7 +104,7 @@ tr:nth-child(even){background:#121621;}
   <button id="autoTuneDiagnostics" type="button">Auto-tune to pass diagnostics</button>
 </div>
 <div class="hint" id="modeHint">
-  Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Vs Median estimates performance against the selected reference pool using both skill and uncertainty.
+  Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. Vs Median estimates performance against the selected reference pool using both displayed skill and both sides’ uncertainty.
 </div>
 
 <div class="diagnostics" id="diagnostics">
@@ -112,7 +112,7 @@ tr:nth-child(even){background:#121621;}
   <div class="diagnostics-grid" id="diagnosticsGrid"></div>
   <div class="profile-summary" id="profileSummary"></div>
   <div class="status" id="autoTuneStatus">Auto-tune status: idle.</div>
-  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile allows more movement, but still limits RD-driven distortion.</div>
+  <div class="small">Seeding profile prefers stronger raw-order preservation and top-seed stability. Local ranking profile now requires some visible movement while still limiting RD-driven distortion and protecting top seeds.</div>
 </div>
 
 <table>
@@ -157,9 +157,9 @@ tr:nth-child(even){background:#121621;}
     },
     local: {
       mode: "optimistic",
-      strength: 25,
-      scale: 60,
-      useUnderdog: false,
+      strength: 30,
+      scale: 50,
+      useUnderdog: true,
       referenceMode: "median"
     }
   };
@@ -174,18 +174,23 @@ tr:nth-child(even){background:#121621;}
     top16PairRetention: 0.85
   };
   const LOCAL_THRESHOLDS = {
-    spearman: 0.88,
-    top8Overlap: 6,
-    top16Overlap: 11,
-    avgTop8Shift: 4.0,
-    p90AbsChange: 45,
-    maxAbsChange: 70,
-    highRdEntrantsTop16: 3,
-    spreadMin: 0.95,
-    spreadMax: 1.35,
-    optimisticCorrMin: 0.35,
-    optimisticCorrMax: 0.65,
-    balancedCorrAbsMax: 0.35
+    spearmanMin: 0.8,
+    spearmanMax: 0.97,
+    top8Overlap: 5,
+    top16Overlap: 10,
+    avgTop8ShiftMax: 6.0,
+    avgTop8ShiftMin: 1.25,
+    p90AbsChangeMin: 18,
+    p90AbsChangeMax: 60,
+    maxAbsChange: 90,
+    highRdEntrantsTop16: 4,
+    spreadMin: 1.02,
+    spreadMax: 1.5,
+    optimisticCorrMin: 0.2,
+    optimisticCorrMax: 0.8,
+    balancedCorrAbsMax: 0.5,
+    medianRankShiftMin: 3,
+    top16PairRetentionMin: 0.65
   };
 
   const tbody = document.getElementById("b");
@@ -398,15 +403,20 @@ tr:nth-child(even){background:#121621;}
         : true;
 
     const localPass = (
-      metrics.spearman >= LOCAL_THRESHOLDS.spearman &&
+      metrics.spearman >= LOCAL_THRESHOLDS.spearmanMin &&
+      metrics.spearman <= LOCAL_THRESHOLDS.spearmanMax &&
       metrics.top8Overlap >= LOCAL_THRESHOLDS.top8Overlap &&
       metrics.top16Overlap >= LOCAL_THRESHOLDS.top16Overlap &&
-      metrics.avgTop8Shift <= LOCAL_THRESHOLDS.avgTop8Shift &&
-      metrics.p90AbsChange <= LOCAL_THRESHOLDS.p90AbsChange &&
+      metrics.avgTop8Shift <= LOCAL_THRESHOLDS.avgTop8ShiftMax &&
+      metrics.avgTop8Shift >= LOCAL_THRESHOLDS.avgTop8ShiftMin &&
+      metrics.p90AbsChange >= LOCAL_THRESHOLDS.p90AbsChangeMin &&
+      metrics.p90AbsChange <= LOCAL_THRESHOLDS.p90AbsChangeMax &&
       metrics.maxAbsChange <= LOCAL_THRESHOLDS.maxAbsChange &&
       metrics.highRdEntrantsTop16 <= LOCAL_THRESHOLDS.highRdEntrantsTop16 &&
       metrics.top50SpreadRatio >= LOCAL_THRESHOLDS.spreadMin &&
       metrics.top50SpreadRatio <= LOCAL_THRESHOLDS.spreadMax &&
+      metrics.medianAbsRankShift >= LOCAL_THRESHOLDS.medianRankShiftMin &&
+      metrics.top16PairRetention >= LOCAL_THRESHOLDS.top16PairRetentionMin &&
       corrConstraintPass
     );
 
@@ -431,19 +441,24 @@ tr:nth-child(even){background:#121621;}
 
     if (profileMode === "local") {
       const passBonus = evaluateProfilePass(metrics, mode, profileMode) ? 1000000 : 0;
-      const spreadTargetPenalty = Math.abs(metrics.top50SpreadRatio - 1.15) * 200;
+      const spreadTargetPenalty = Math.abs(metrics.top50SpreadRatio - 1.15) * 250;
       const corrTarget = mode === "optimistic" ? 0.5 : 0;
-      const corrPenalty = Math.abs(metrics.rdChangeCorr - corrTarget) * 150;
+      const corrPenalty = Math.abs(metrics.rdChangeCorr - corrTarget) * 140;
+      const movementReward = Math.min(metrics.medianAbsRankShift, 8) * 180 + Math.min(metrics.avgTop8Shift, 6) * 80;
+      const underMovementPenalty = Math.max(0, 3 - metrics.medianAbsRankShift) * 300 + Math.max(0, 18 - metrics.p90AbsChange) * 20;
+      const overMovementPenalty = Math.max(0, metrics.avgTop8Shift - 6) * 120 + Math.max(0, metrics.maxAbsChange - 90) * 8;
+      const orderCompressionPenalty = Math.max(0, metrics.spearman - 0.96) * 4000;
       return passBonus +
-        metrics.spearman * 5000 +
-        metrics.top16Overlap * 80 +
+        metrics.top16Overlap * 90 +
         metrics.top8Overlap * 40 +
-        metrics.top16PairRetention * 200 -
+        metrics.top16PairRetention * 220 +
+        movementReward -
         spreadTargetPenalty -
         corrPenalty -
-        metrics.avgTop8Shift * 80 -
-        metrics.p90AbsChange * 2 -
-        metrics.highRdEntrantsTop16 * 50;
+        underMovementPenalty -
+        overMovementPenalty -
+        orderCompressionPenalty -
+        metrics.highRdEntrantsTop16 * 60;
     }
 
     return -Infinity;
@@ -452,6 +467,7 @@ tr:nth-child(even){background:#121621;}
   const renderDiagnostics = (metrics, mode, profileMode) => {
     diagnosticsGrid.innerHTML = [
       metricRow("Spearman ρ", metrics.spearman.toFixed(3)),
+      metricRow("Median |rank shift|", metrics.medianAbsRankShift.toFixed(2)),
       metricRow("Top 8 overlap", `${metrics.top8Overlap}/8`),
       metricRow("Top 16 overlap", `${metrics.top16Overlap}/16`),
       metricRow("Avg top-8 rank shift", metrics.avgTop8Shift.toFixed(2)),
@@ -496,6 +512,8 @@ tr:nth-child(even){background:#121621;}
     const highRdEntrantsTop16 = top16Entrants.filter(p => p.sigma > rd75).length;
     const rawTop8Players = rawSorted.slice(0, 8);
     const avgTop8Shift = mean(rawTop8Players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0))));
+    const allAbsRankShifts = players.map(p => Math.abs((transformedRanks.get(p.athlete) || 0) - (rawRanks.get(p.athlete) || 0)));
+    const medianAbsRankShift = median(allAbsRankShifts);
     const top50Raw = rawSorted.slice(0, Math.min(50, rawSorted.length)).map(p => p.rating);
     const top50Transformed = transformedSorted.slice(0, Math.min(50, transformedSorted.length)).map(p => p.skill);
     const top50SpreadRatio = standardDeviation(top50Transformed) / Math.max(1e-9, standardDeviation(top50Raw));
@@ -516,6 +534,7 @@ tr:nth-child(even){background:#121621;}
 
     return {
       spearman: spearmanFromRankMaps(players, rawRanks, transformedRanks),
+      medianAbsRankShift,
       top8Overlap: overlapCount(rawTop8, transformedTop8),
       top16Overlap: overlapCount(rawTop16, transformedTop16),
       avgTop8Shift,
@@ -586,20 +605,20 @@ tr:nth-child(even){background:#121621;}
   const getSearchRanges = (mode) => {
     if (mode === "conservative") {
       return {
-        strengths: Array.from({ length: 12 }, (_, i) => Number(((i + 1) * 0.05).toFixed(2))),
+        strengths: Array.from({ length: 20 }, (_, i) => Number(((i + 1) * 0.05).toFixed(2))),
         scales: [Number(bonusDivisorInput.value) || 60]
       };
     }
     if (mode === "balanced") {
       return {
-        strengths: Array.from({ length: 12 }, (_, i) => Number(((i + 1) * 0.25).toFixed(2))),
-        scales: Array.from({ length: 10 }, (_, i) => 30 + i * 10)
+        strengths: Array.from({ length: 20 }, (_, i) => Number(((i + 1) * 0.25).toFixed(2))),
+        scales: Array.from({ length: 13 }, (_, i) => 20 + i * 10)
       };
     }
     if (mode === "optimistic") {
       return {
-        strengths: Array.from({ length: 12 }, (_, i) => 5 + i * 5),
-        scales: Array.from({ length: 14 }, (_, i) => 20 + i * 10)
+        strengths: Array.from({ length: 20 }, (_, i) => 5 + i * 5),
+        scales: Array.from({ length: 17 }, (_, i) => 20 + i * 10)
       };
     }
     return { strengths: [0], scales: [Number(bonusDivisorInput.value) || 60] };
@@ -608,7 +627,6 @@ tr:nth-child(even){background:#121621;}
   const autoTuneDiagnostics = () => {
     const profileMode = profileModeInput.value;
     const mode = modeInput.value;
-    const referenceMode = referenceModeInput.value;
     const useUnderdog = useUnderdogInput.checked;
 
     if (profileMode === "custom") {
@@ -622,25 +640,31 @@ tr:nth-child(even){background:#121621;}
       return;
     }
 
-    const { strengths, scales } = getSearchRanges(mode);
+    const candidateModes = profileMode === "local"
+      ? [mode, ...(mode === "optimistic" ? ["balanced"] : mode === "balanced" ? ["optimistic"] : ["balanced", "optimistic"])]
+      : [mode];
+
     let bestCandidate = null;
     let bestPassingCandidate = null;
 
-    strengths.forEach(strength => {
-      scales.forEach(scale => {
-        const enriched = buildEnriched(mode, strength, scale, useUnderdog);
-        const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
-        const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
-        const passes = evaluateProfilePass(metrics, mode, profileMode);
-        const score = scoreCandidate(metrics, mode, profileMode);
-        const candidate = { strength, scale, metrics, passes, score };
+    candidateModes.forEach(candidateMode => {
+      const { strengths, scales } = getSearchRanges(candidateMode);
+      strengths.forEach(strength => {
+        scales.forEach(scale => {
+          const enriched = buildEnriched(candidateMode, strength, scale, useUnderdog);
+          const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+          const metrics = computeMetrics(players, enriched, rawSorted, fullSorted);
+          const passes = evaluateProfilePass(metrics, candidateMode, profileMode);
+          const score = scoreCandidate(metrics, candidateMode, profileMode);
+          const candidate = { mode: candidateMode, strength, scale, metrics, passes, score };
 
-        if (!bestCandidate || candidate.score > bestCandidate.score) {
-          bestCandidate = candidate;
-        }
-        if (passes && (!bestPassingCandidate || candidate.score > bestPassingCandidate.score)) {
-          bestPassingCandidate = candidate;
-        }
+          if (!bestCandidate || candidate.score > bestCandidate.score) {
+            bestCandidate = candidate;
+          }
+          if (passes && (!bestPassingCandidate || candidate.score > bestPassingCandidate.score)) {
+            bestPassingCandidate = candidate;
+          }
+        });
       });
     });
 
@@ -650,12 +674,13 @@ tr:nth-child(even){background:#121621;}
       return;
     }
 
+    modeInput.value = chosen.mode;
     adjustmentStrengthInput.value = String(chosen.strength);
     bonusDivisorInput.value = String(chosen.scale);
 
     autoTuneStatus.textContent = chosen.passes
-      ? `Auto-tune status: found passing settings for ${getProfileLabel(profileMode)} — strength ${chosen.strength}, scale ${chosen.scale}.`
-      : `Auto-tune status: no passing settings found; applied closest candidate — strength ${chosen.strength}, scale ${chosen.scale}.`;
+      ? `Auto-tune status: found passing settings for ${getProfileLabel(profileMode)} — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`
+      : `Auto-tune status: no passing settings found; applied closest candidate — ${chosen.mode} mode, strength ${chosen.strength}, scale ${chosen.scale}.`;
 
     render();
   };
