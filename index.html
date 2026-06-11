@@ -105,6 +105,13 @@ tr:nth-child(even){background:#121621;}
   const TOP_N = 150;
   const BASE_TIERS = 6;
   const BASE_TIER_LABELS = ["S", "A", "B", "C", "D", "F"];
+  const DEFAULT_STRENGTHS = {
+    raw: 0,
+    conservative: 0.35,
+    balanced: 1.5,
+    optimistic: 35
+  };
+
   const tbody = document.getElementById("b");
   const modeInput = document.getElementById("mode");
   const adjustmentStrengthInput = document.getElementById("adjustmentStrength");
@@ -170,7 +177,7 @@ tr:nth-child(even){background:#121621;}
       return `Conservative mode uses rating − strength × RD, favoring safer, lower-uncertainty seeding. ${referenceText}`;
     }
     if (mode === "balanced") {
-      return `Balanced mode shrinks uncertain ratings toward the local median using a smooth RD-based weight. ${referenceText}`;
+      return `Balanced mode shrinks uncertain ratings toward the local median using a strength-scaled RD penalty. Higher strength now means more shrinkage. ${referenceText}`;
     }
     return `Optimistic mode adds a capped RD-based bonus; enabling underdog boost gives slightly more uplift to lower-rated improvers. ${referenceText}`;
   };
@@ -216,6 +223,11 @@ tr:nth-child(even){background:#121621;}
       skill: median(skills),
       rd: Math.max(1, median(rds))
     };
+  };
+
+  const applyModeDefaults = (mode) => {
+    const defaultStrength = DEFAULT_STRENGTHS[mode] ?? 0;
+    adjustmentStrengthInput.value = String(defaultStrength);
   };
 
   // ======================
@@ -277,8 +289,8 @@ tr:nth-child(even){background:#121621;}
       if (mode === "conservative") {
         skill = rating - adjustmentStrength * rd;
       } else if (mode === "balanced") {
-        const c = Math.max(1, adjustmentStrength);
-        const weight = (c * c) / ((c * c) + (rd * rd));
+        const scaledPenalty = adjustmentStrength * Math.pow(rd / bonusDivisor, 2);
+        const weight = 1 / (1 + scaledPenalty);
         skill = medianRating + (rating - medianRating) * weight;
       } else if (mode === "optimistic") {
         let bonus = adjustmentStrength * Math.log1p(rd / bonusDivisor);
@@ -397,11 +409,17 @@ tr:nth-child(even){background:#121621;}
     });
   };
 
-  [modeInput, adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput, referenceModeInput].forEach(el => {
+  modeInput.addEventListener("change", () => {
+    applyModeDefaults(modeInput.value);
+    render();
+  });
+
+  [adjustmentStrengthInput, bonusDivisorInput, useUnderdogInput, referenceModeInput].forEach(el => {
     el.addEventListener("input", render);
     el.addEventListener("change", render);
   });
 
+  applyModeDefaults(modeInput.value);
   render();
 
 })();
