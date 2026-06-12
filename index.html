@@ -44,20 +44,28 @@ tr:nth-child(even){background:#121621;}
   
 <h3>How to read this table</h3>
 <ul>
-  <li>Ranks AU/NZ longsword fencers for local seeding and near-term match prediction, rather than published global rating alone.</li>
-  <li>Offers four views of the same Glicko-style data: raw rating, conservative lower-bound seeding, balanced local-centre shrinkage, and an optimistic upside model.</li>
-  <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
-  <li><strong>Raw</strong> uses published rating only, with no uncertainty adjustment.</li>
-  <li><strong>Seeding</strong> discounts uncertain ratings to produce a more cautious ordering.</li>
-  <li><strong>Leaderboard</strong> pulls uncertain ratings toward the local median, tempering extreme uncertain placements.</li>
-  <li><strong>Rising Stars</strong> gives uncertain improvers a bounded upside bonus while staying anchored to the published rating.</li>
-  <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
-  <li><strong>Vs Median</strong> estimates the chance of beating a synthetic reference fencer built from the selected comparison pool, using both displayed skill and both sides’ uncertainty.</li>
+  
+  
+  <li>Ranks AU/NZ fencers in the selected weapon (or the combined 3-Weapon view) for local seeding and near-term match prediction, 
+    rather than relying on published rating alone.</li>
+  <li> Offers four views of the same Glicko-style data: Raw rating, 
+    Seeding (cautious lower-bound ordering), Leaderboard (balanced local-centre shrinkage), 
+    and Rising Stars (bounded upside for uncertain improvers). </li>
+  <li>Interprets the source dataset's confidence value as Glicko-2 rating deviation (RD), 
+  where lower values mean higher trust and higher values mean more uncertainty.</li>
+<li>Raw uses published rating only, with no uncertainty adjustment.</li>
+  
+<li>Seeding discounts uncertain ratings to produce a more cautious ordering, and reduces displayed uncertainty (σ) to the residual left over after that discount, so seed order and win% broadly agree.</li>
+  <li>Leaderboard pulls uncertain ratings toward the local median, tempering extreme uncertain placements without inflating or discounting anyone.</li>
+<li>Rising Stars gives uncertain improvers below the field average a bounded upside bonus, and removes already-established fencers — those whose skill, even pessimistically (skill − z·σ), still sits clearly above the field — so the list highlights emerging talent rather than restating the existing elite.</li>
+<li>Change shows how far the displayed skill moves from the published rating.</li>
+<li>The "Vs [Reference]" column estimates the chance of beating a synthetic reference fencer from the selected comparison pool (median field, mean field, top 16, or #1), using both displayed skill and both sides' uncertainty; Rising Stars defaults this to Vs #1, to show how close an emerging fencer is to the top seed.</li>
   <li>The alternative modes are analytical lenses on the same rating base, not replacements for the underlying Glicko-2 style rating.</li>
-  <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
-  <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
-  <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
-  <li>Shows uncertainty (σ) using the underlying Glicko-style deviation, where lower values indicate a more reliable estimate.</li>
+    <li> Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
+      <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is Tier 7 (with +/– variants), followed by Tier 8, and so on.</li>
+        <li>  Uses a heatmap, scaled to the fencers currently shown, to make relative strength across the displayed list easier to compare at a glance.</li>
+          <li> Shows uncertainty (σ) using the underlying Glicko-style deviation, where lower values indicate a more reliable estimate — except in Seeding mode, where σ reflects residual uncertainty after the cautious discount has been applied.</li>
+            <li>The 3-Weapon view combines an athlete's Longsword, Rapier, and Sabre ratings into a single cross-weapon estimate, weighted by each rating's reliability.</li>
 </ul>
 
 <div class="controls">
