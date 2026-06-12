@@ -450,7 +450,7 @@ tr:nth-child(even){background:#121621;}
     async loadPlayers() {
       let players = [];
       try {
-        const res = await fetch(CONFIG.dataUrl);
+        const res = await fetch(`${CONFIG.dataUrl}?ratingsetid=1`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         players = await res.json();
       } catch (err) {
