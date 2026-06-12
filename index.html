@@ -34,6 +34,7 @@ tr:nth-child(even){background:#121621;}
   <button onclick="setRatingset(4)">Rapier & Dagger</button>
   <button onclick="setRatingset(3)">Sabre</button>
   <button onclick="setRatingset(9)">Sidesword</button>
+  <button onclick="setRatingsetGroup('threeWeapon')">3-Weapon</button>
   
 </div>
   
@@ -108,9 +109,16 @@ tr:nth-child(even){background:#121621;}
 </table>
 
 <script>
+ 
 let currentRatingset = 1;
+let currentGroup = null;
 
  function updateTitle() {
+  if (currentGroup === "threeWeapon") {
+    document.getElementById("setName").textContent = "3-Weapon";
+    return;
+  }
+
   const names = {
     1: "Longsword",
     5: "Rapier",
@@ -125,8 +133,18 @@ let currentRatingset = 1;
 
 // button handler (must be global if using inline onclick)
 async function setRatingset(id) {
+  currentGroup = null;
   currentRatingset = id;
 
+  if (!window.app) return;
+
+  const ok = await window.app.loadPlayers();
+  if (ok) window.app.render();
+
+  updateTitle();
+}
+async function setRatingsetGroup(groupName) {
+  currentGroup = groupName;
   if (!window.app) return;
 
   const ok = await window.app.loadPlayers();
@@ -172,6 +190,15 @@ async function setRatingset(id) {
       }
     }
   };
+
+   const WEAPON_GROUPS = {
+  threeWeapon: [1, 5, 3] // longsword, rapier, sabre
+};
+  const WEAPON_SIGMA = {
+  1: 40, // longsword (most stable baseline)
+  5: 55, // rapier
+  3: 60  // sabre (more volatile)
+};
 
   const dom = {
     tbody: document.getElementById("b"),
@@ -462,6 +489,55 @@ async function setRatingset(id) {
       };
     },
 
+    aggregateMultiWeapon(players) {
+  const map = new Map();
+
+  for (const p of players) {
+    const key = p.athlete;
+
+    const sigmaW = WEAPON_SIGMA[p.weapon] ?? 50;
+    const sigmaObs = Math.max(p.confidence || 50, 1);
+
+    const variance = sigmaObs * sigmaObs + sigmaW * sigmaW;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        athlete: p.athlete,
+        club: p.club,
+        nationality: p.nationality,
+        _r: [],
+        _v: []
+      });
+    }
+
+    const entry = map.get(key);
+    entry._r.push(p.rating || 0);
+    entry._v.push(variance);
+  }
+
+  return Array.from(map.values()).map(p => {
+    let num = 0;
+    let den = 0;
+
+    for (let i = 0; i < p._r.length; i++) {
+      const w = 1 / p._v[i];
+      num += p._r[i] * w;
+      den += w;
+    }
+
+    const theta = num / den;
+    const posteriorVar = 1 / den;
+
+    return {
+      athlete: p.athlete,
+      club: p.club,
+      nationality: p.nationality,
+      rating: theta,
+      confidence: Math.sqrt(posteriorVar)
+    };
+  });
+}
+
     render() {
       stateManager.syncStateToControls(this.state);
       const derived = this.computeDerived();
@@ -481,19 +557,50 @@ async function setRatingset(id) {
 
     async loadPlayers() {
       let players = [];
-      try {
-        const res = await fetch(
-  `${CONFIG.dataUrl}?ratingsetid=${currentRatingset}`
-);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        players = await res.json();
-      } catch (err) {
-        console.error("Failed to load player data:", err);
-        ui.showError("Failed to load player data. Check the API endpoint / CORS settings.");
-        return false;
-      }
+
+try {
+
+  const ids = currentGroup
+    ? WEAPON_GROUPS[currentGroup]
+    : [currentRatingset];
+
+  for (const id of ids) {
+    const res = await fetch(`${CONFIG.dataUrl}?ratingsetid=${id}`);
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    data.forEach(p => p.weapon = id);
+    players.push(...data);
+  }
+
+} catch (err) {
+  console.error("Failed to load player data:", err);
+  ui.showError("Failed to load player data.");
+  return false;
+}
+
+//       let players = [];
+//       try {
+//         const res = await fetch(
+//   `${CONFIG.dataUrl}?ratingsetid=${currentRatingset}`
+// );
+//         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+//         players = await res.json();
+//       } catch (err) {
+//         console.error("Failed to load player data:", err);
+//         ui.showError("Failed to load player data. Check the API endpoint / CORS settings.");
+//         return false;
+}
 
       this.players = players.filter(p => this.isAUorNZ(p.nationality));
+
+if (currentGroup) {
+  this.players = this.aggregateMultiWeapon(this.players);
+}
 
       if (!this.players.length) {
         ui.showError("No AU/NZ players found.");
