@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>AU-NZ Rapier & Dagger Top 100 – Improved Local Rating</title>
+
+<style>
+body{font-family:Arial;background:#0f1115;color:#e6e6e6;margin:20px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th,td{border:1px solid #2a2f3a;padding:6px;}
+th{background:#1f2633;}
+tr:nth-child(even){background:#121621;}
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:16px 0 20px;}
+.controls label{display:flex;align-items:center;gap:6px;}
+.controls select{background:#121621;color:#e6e6e6;border:1px solid #2a2f3a;padding:4px 6px;}
+.hint{color:#aeb7c6;font-size:12px;margin-top:-8px;margin-bottom:12px;}
+.positive{color:#7ee787;font-weight:600;}
+.negative{color:#ff7b72;font-weight:600;}
+.neutral{color:#aeb7c6;}
+.help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #4b5565;color:#aeb7c6;font-size:11px;cursor:help;line-height:1;vertical-align:middle;}
+.summary{margin:16px 0 20px;padding:14px;background:#121621;border:1px solid #2a2f3a;border-radius:6px;}
+.summary h3{margin:0 0 10px;font-size:16px;}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;margin-bottom:12px;}
+.metric{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #222938;padding:4px 0;}
+.metric-name{color:#aeb7c6;}
+.small{font-size:12px;color:#aeb7c6;}
+</style>
+</head>
+
+<body>
+<h2><a href="index.html">Longsword Rankings</a></h2>
+<h2>AU-NZ Rapier & Dagger Top 100 – Improved Local Rating</h2>
+  
+<h3>How to read this table</h3>
+<ul>
+  <li>Ranks AU/NZ longsword fencers for local seeding and near-term match prediction, rather than published global rating alone.</li>
+  <li>Offers four views of the same Glicko-style data: raw rating, conservative lower-bound seeding, balanced local-centre shrinkage, and an optimistic upside model.</li>
+  <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
+  <li><strong>Raw</strong> uses published rating only, with no uncertainty adjustment.</li>
+  <li><strong>Conservative</strong> discounts uncertain ratings to produce a more cautious ordering.</li>
+  <li><strong>Balanced</strong> pulls uncertain ratings toward the local median, tempering extreme uncertain placements.</li>
+  <li><strong>Optimistic</strong> gives uncertain improvers a bounded upside bonus while staying anchored to the published rating.</li>
+  <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
+  <li><strong>Vs Median</strong> estimates the chance of beating a synthetic reference fencer built from the selected comparison pool, using both displayed skill and both sides’ uncertainty.</li>
+  <li>The alternative modes are analytical lenses on the same rating base, not replacements for the underlying Glicko-2 style rating.</li>
+  <li>Groups athletes into quantile-based letter tiers, with + / – markers indicating whether a fencer sits near the top or bottom of their tier.</li>
+  <li>Uses the ordering S, A, B, C, D, F for the first six tiers; if more tiers are added later, the next tier is 7, followed by Tier 8 and so on.</li>
+  <li>Uses a heatmap to make relative strength across the field easier to compare at a glance.</li>
+  <li>Shows uncertainty (σ) using the underlying Glicko-style deviation, where lower values indicate a more reliable estimate.</li>
+</ul>
+
+<div class="controls">
+  <label>
+    Mode
+    <select id="mode">
+      <option value="raw">Raw HEMA Rating</option>
+      <option value="conservative">Conservative</option>
+      <option value="balanced">Balanced</option>
+      <option value="optimistic" selected>Optimistic</option>
+    </select>
+  </label>
+  <label>
+    Reference
+    <select id="referenceMode">
+      <option value="median" selected>Median field</option>
+      <option value="mean">Mean field</option>
+      <option value="top16">Top 16</option>
+      <option value="top1">#1 fencer</option>
+    </select>
+  </label>
+</div>
+<div class="hint" id="modeHint">
+  Optimistic mode gives a bounded uncertainty-based upside bonus while staying anchored to published ratings. Vs Median estimates performance against the selected reference pool using both displayed skill and both sides’ uncertainty.
+</div>
+
+<div class="summary" id="summary">
+  <h3>Mode summary</h3>
+  <div class="summary-grid" id="summaryGrid"></div>
+  <div class="small" id="summaryNote">These modes are curated analytical views of the same published rating base.</div>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>Rank</th>
+<th>Tier</th>
+<th>Athlete</th>
+<th>Club</th>
+<th>Rating</th>
+<th>Change</th>
+<th>Skill</th>
+<th>Uncertainty</th>
+<th id="winPctHeader" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">Vs Median <span class="help" aria-hidden="true">?</span></th>
+</tr>
+</thead>
+
+<tbody id="b"></tbody>
+</table>
+
+<script>
+
+(async () => {
+  const CONFIG = {
+    topN: 100,
+    baseTiers: 6,
+    baseTierLabels: ["S", "A", "B", "C", "D", "F"],
+    dataUrl: "https://small-sea-8b60.nt-mcguigan.workers.dev/",
+    modePresets: {
+      raw: {
+        strength: 0,
+        scale: 60,
+        useUnderdog: false,
+        label: "Raw",
+        summary: "Published rating only, with no local uncertainty adjustment."
+      },
+      conservative: {
+        strength: 0.75,
+        scale: 60,
+        useUnderdog: false,
+        label: "Conservative",
+        summary: "Cautious lens that discounts uncertain ratings and favors proven stability."
+      },
+      balanced: {
+        strength: 0.9,
+        scale: 80,
+        useUnderdog: false,
+        label: "Balanced",
+        summary: "Middle-ground lens that shrinks uncertain extremes toward the local centre without overwhelming the published rating."
+      },
+      optimistic: {
+        strength: 60,
+        scale: 35,
+        useUnderdog: true,
+        label: "Optimistic",
+        summary: "Upside-sensitive lens that gives uncertain improvers a bounded boost."
+      }
+    }
+  };
+
+  const dom = {
+    tbody: document.getElementById("b"),
+    modeInput: document.getElementById("mode"),
+    referenceModeInput: document.getElementById("referenceMode"),
+    modeHint: document.getElementById("modeHint"),
+    winPctHeader: document.getElementById("winPctHeader"),
+    summaryGrid: document.getElementById("summaryGrid"),
+    summaryNote: document.getElementById("summaryNote")
+  };
+
+  const stats = {
+    median(values) {
+      if (!values.length) return 0;
+      const sorted = values.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    },
+
+    mean(values) {
+      if (!values.length) return 0;
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    },
+
+    normalCdf(x) {
+      const sign = x < 0 ? -1 : 1;
+      const absX = Math.abs(x) / Math.sqrt(2);
+      const t = 1 / (1 + 0.3275911 * absX);
+      const a1 = 0.254829592;
+      const a2 = -0.284496736;
+      const a3 = 1.421413741;
+      const a4 = -1.453152027;
+      const a5 = 1.061405429;
+      const erf = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+      return 0.5 * (1 + sign * erf);
+    }
+  };
+
+  const labels = {
+    getTierLabel(index) {
+      if (index < CONFIG.baseTierLabels.length) return CONFIG.baseTierLabels[index];
+      if (index === CONFIG.baseTierLabels.length) return "F-";
+
+      const extraIndex = index - CONFIG.baseTierLabels.length - 1;
+      const tierNumber = 7 + Math.floor(extraIndex / 3);
+      const suffixCycle = ["+", "", "-"];
+      const suffix = suffixCycle[extraIndex % 3];
+
+      return `Tier ${tierNumber}${suffix}`;
+    },
+
+    getReferenceLabel(referenceMode) {
+      if (referenceMode === "mean") return "Vs Mean";
+      if (referenceMode === "top16") return "Vs Top 16";
+      if (referenceMode === "top1") return "Vs #1";
+      return "Vs Median";
+    },
+
+    getModeHint(mode, referenceMode) {
+      const referenceText = `${this.getReferenceLabel(referenceMode)} estimates performance against the selected reference pool using both skill and uncertainty.`;
+
+      if (mode === "raw") {
+        return `Raw mode uses published HEMA Rating only, with no uncertainty adjustment. ${referenceText}`;
+      }
+      if (mode === "conservative") {
+        return `Conservative mode discounts uncertain ratings to create a more cautious ordering. ${referenceText}`;
+      }
+      if (mode === "balanced") {
+        return `Balanced mode shrinks uncertain ratings toward the local median, softening extreme uncertain placements without collapsing elite ratings too aggressively. ${referenceText}`;
+      }
+      return `Optimistic mode gives a bounded uncertainty-based upside bonus while staying anchored to published ratings. ${referenceText}`;
+    },
+
+    formatChange(value) {
+      if (Math.abs(value) < 0.05) return `<span class="neutral">0.0</span>`;
+      if (value > 0) return `<span class="positive">+${value.toFixed(1)}</span>`;
+      return `<span class="negative">${value.toFixed(1)}</span>`;
+    }
+  };
+
+  const rankingEngine = {
+    buildReference(referenceMode, enriched) {
+      const skills = enriched.map(p => p.skill);
+      const rds = enriched.map(p => p.sigma);
+
+      if (referenceMode === "mean") {
+        return { label: "Vs Mean", skill: stats.mean(skills), rd: Math.max(1, stats.mean(rds)) };
+      }
+      if (referenceMode === "top16") {
+        const top = enriched.slice().sort((a, b) => b.skill - a.skill).slice(0, Math.min(16, enriched.length));
+        return {
+          label: "Vs Top 16",
+          skill: stats.mean(top.map(p => p.skill)),
+          rd: Math.max(1, stats.mean(top.map(p => p.sigma)))
+        };
+      }
+      if (referenceMode === "top1") {
+        const top = enriched.slice().sort((a, b) => b.skill - a.skill)[0];
+        return { label: "Vs #1", skill: top?.skill ?? 0, rd: Math.max(1, top?.sigma ?? 1) };
+      }
+      return { label: "Vs Median", skill: stats.median(skills), rd: Math.max(1, stats.median(rds)) };
+    },
+
+    buildEnriched(players, ratingContext, mode) {
+      const preset = CONFIG.modePresets[mode];
+      return players.map(p => {
+        const rating = p.rating || 0;
+        const rd = p.confidence || 0;
+        let skill = rating;
+
+        if (mode === "conservative") {
+          skill = rating - preset.strength * rd;
+        } else if (mode === "balanced") {
+          const scaledPenalty = preset.strength * Math.pow(rd / preset.scale, 2);
+          const weight = 1 / (1 + scaledPenalty);
+          skill = ratingContext.medianRating + (rating - ratingContext.medianRating) * weight;
+        } else if (mode === "optimistic") {
+          let bonus = preset.strength * Math.log1p(rd / preset.scale);
+          if (preset.useUnderdog) {
+            const underdogFactor = Math.max(0.7, Math.min(1.5, 1 + (ratingContext.meanRating - rating) / 400));
+            bonus *= underdogFactor;
+          }
+          skill = rating + bonus;
+        }
+
+        const sigma = rd;
+        const change = skill - rating;
+        return { ...p, skill, sigma, change };
+      });
+    },
+
+    buildTierMaps(sorted) {
+      const tiers = Array.from({ length: CONFIG.baseTiers }, () => []);
+      sorted.forEach((p, i) => {
+        const idx = Math.min(CONFIG.baseTiers - 1, Math.floor((i / sorted.length) * CONFIG.baseTiers));
+        tiers[idx].push(p);
+      });
+
+      const tierMap = new Map();
+      tiers.forEach((tier, index) => tier.forEach(player => tierMap.set(player.athlete, labels.getTierLabel(index))));
+
+      const gradeMap = new Map();
+      tiers.forEach(tier => {
+        if (!tier.length) return;
+        const min = Math.min(...tier.map(p => p.skill));
+        const max = Math.max(...tier.map(p => p.skill));
+        tier.forEach(p => {
+          const z = (p.skill - min) / ((max - min) || 1);
+          let grade = "";
+          if (z > 0.66) grade = "+";
+          else if (z < 0.33) grade = "-";
+          gradeMap.set(p.athlete, grade);
+        });
+      });
+
+      return { tierMap, gradeMap };
+    },
+
+    createHeatFunction(enriched) {
+      const vals = enriched.map(d => d.skill);
+      const minS = Math.min(...vals);
+      const maxS = Math.max(...vals);
+      return (value) => {
+        const t = (value - minS) / ((maxS - minS) || 1);
+        return `rgba(${255 * (1 - t) | 0},${200 * t | 0},120,0.25)`;
+      };
+    },
+
+    createWinProbability(reference) {
+      return (skill, rd) => {
+        const combinedRd = Math.sqrt((rd * rd) + (reference.rd * reference.rd));
+        const z = (skill - reference.skill) / Math.max(1, combinedRd);
+        return stats.normalCdf(z);
+      };
+    }
+  };
+
+  const ui = {
+    metricRow(name, value) {
+      return `<div class="metric"><span class="metric-name">${name}</span><span>${value}</span></div>`;
+    },
+
+    showError(message) {
+      dom.tbody.innerHTML = `<tr><td colspan="9">${message}</td></tr>`;
+    },
+
+    renderSummary(state, derived) {
+      const preset = CONFIG.modePresets[state.mode];
+      dom.summaryGrid.innerHTML = [
+        this.metricRow("Selected mode", preset.label),
+        this.metricRow("Mode effect", preset.summary),
+        this.metricRow("Average change", `${derived.averageChange >= 0 ? "+" : ""}${derived.averageChange.toFixed(1)}`),
+        this.metricRow("Largest change", `${derived.maxAbsChange.toFixed(1)}`),
+        this.metricRow("Top-16 changes", String(derived.top16DifferenceCount)),
+        this.metricRow("Highest RD in top 16", `${derived.top16MaxRd.toFixed(1)}`)
+      ].join("");
+      dom.summaryNote.textContent = `${preset.label} is a curated analytical lens on the same published rating base.`;
+    },
+
+    renderTable(sorted, tierMap, gradeMap, heat, winProb) {
+      dom.tbody.innerHTML = "";
+      sorted.forEach((p, i) => {
+        const tier = tierMap.get(p.athlete);
+        const grade = gradeMap.get(p.athlete);
+        const tr = document.createElement("tr");
+        tr.style.background = heat(p.skill);
+        tr.innerHTML =
+          `<td>${i + 1}</td>` +
+          `<td>${tier}${grade}</td>` +
+          `<td>${p.athlete}</td>` +
+          `<td>${p.club}</td>` +
+          `<td>${(p.rating ?? 0).toFixed(1)}</td>` +
+          `<td>${labels.formatChange(p.change ?? 0)}</td>` +
+          `<td>${(p.skill ?? 0).toFixed(2)}</td>` +
+          `<td>${(p.sigma ?? 0).toFixed(1)}</td>` +
+          `<td>${(winProb(p.skill, p.sigma) * 100).toFixed(1)}%</td>`;
+        dom.tbody.appendChild(tr);
+      });
+    },
+
+    render(state, derived) {
+      dom.modeHint.textContent = labels.getModeHint(state.mode, state.referenceMode);
+      dom.winPctHeader.innerHTML = `${derived.reference.label} <span class="help" aria-hidden="true" title="Chance of beating the selected synthetic reference opponent, using displayed skill and combined uncertainty.">?</span>`;
+      dom.winPctHeader.title = `Chance of beating the selected ${derived.reference.label.replace("Vs ", "").toLowerCase()} reference opponent, using displayed skill and combined uncertainty.`;
+      this.renderSummary(state, derived);
+      this.renderTable(derived.sorted, derived.tierMap, derived.gradeMap, derived.heat, derived.winProb);
+    }
+  };
+
+  const stateManager = {
+    createInitialState() {
+      return {
+        mode: dom.modeInput.value,
+        referenceMode: dom.referenceModeInput.value
+      };
+    },
+
+    syncStateToControls(state) {
+      dom.modeInput.value = state.mode;
+      dom.referenceModeInput.value = state.referenceMode;
+    },
+
+    readControlsIntoState(state) {
+      state.mode = dom.modeInput.value;
+      state.referenceMode = dom.referenceModeInput.value;
+    }
+  };
+
+  const app = {
+    state: stateManager.createInitialState(),
+    players: [],
+    ratingContext: null,
+    rawSorted: [],
+
+    isAUorNZ(value) {
+      const text = (value || "").toLowerCase();
+      return text.includes("australia") || text.includes("new zealand") || text === "au" || text === "nz";
+    },
+
+    computeDerived() {
+      const enriched = rankingEngine.buildEnriched(this.players, this.ratingContext, this.state.mode);
+      const reference = rankingEngine.buildReference(this.state.referenceMode, enriched);
+      const winProb = rankingEngine.createWinProbability(reference);
+      const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+      const sorted = fullSorted.slice(0, CONFIG.topN);
+      const { tierMap, gradeMap } = rankingEngine.buildTierMaps(sorted);
+      const heat = rankingEngine.createHeatFunction(enriched);
+      const averageChange = stats.mean(enriched.map(p => p.change));
+      const maxAbsChange = Math.max(...enriched.map(p => Math.abs(p.change)), 0);
+      const rawTop16 = this.rawSorted.slice(0, 16).map(p => p.athlete);
+      const adjustedTop16 = fullSorted.slice(0, 16).map(p => p.athlete);
+      const top16DifferenceCount = adjustedTop16.filter(name => !rawTop16.includes(name)).length;
+      const top16MaxRd = Math.max(...fullSorted.slice(0, 16).map(p => p.sigma || 0), 0);
+
+      return {
+        enriched,
+        reference,
+        winProb,
+        fullSorted,
+        sorted,
+        tierMap,
+        gradeMap,
+        heat,
+        averageChange,
+        maxAbsChange,
+        top16DifferenceCount,
+        top16MaxRd
+      };
+    },
+
+    render() {
+      stateManager.syncStateToControls(this.state);
+      const derived = this.computeDerived();
+      ui.render(this.state, derived);
+    },
+
+    updateFromControls() {
+      stateManager.readControlsIntoState(this.state);
+      this.render();
+    },
+
+    bindEvents() {
+      dom.modeInput.addEventListener("change", () => this.updateFromControls());
+      dom.referenceModeInput.addEventListener("change", () => this.updateFromControls());
+      dom.referenceModeInput.addEventListener("input", () => this.updateFromControls());
+    },
+
+    async loadPlayers() {
+      let players = [];
+      try {
+        const res = await fetch(CONFIG.dataUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        players = await res.json();
+      } catch (err) {
+        console.error("Failed to load player data:", err);
+        ui.showError("Failed to load player data. Check the API endpoint / CORS settings.");
+        return false;
+      }
+
+      this.players = players.filter(p => this.isAUorNZ(p.nationality));
+
+      if (!this.players.length) {
+        ui.showError("No AU/NZ players found.");
+        return false;
+      }
+
+      const ratingValues = this.players.map(p => p.rating || 0);
+      this.ratingContext = {
+        meanRating: stats.mean(ratingValues),
+        medianRating: stats.median(ratingValues)
+      };
+      this.rawSorted = this.players.slice().sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      return true;
+    },
+
+    async init() {
+      this.bindEvents();
+      const loaded = await this.loadPlayers();
+      if (!loaded) return;
+      this.render();
+    }
+  };
+
+  await app.init();
+})();
+
+</script>
+
+</body>
+</html>
