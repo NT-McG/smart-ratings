@@ -445,11 +445,10 @@ return { ...p, skill, sigma, change };
 
   const stateManager = {
     createInitialState() {
-      return {
-        mode: dom.modeInput.value,
-        referenceMode: dom.referenceModeInput.value
-      };
-    },
+  const mode = dom.modeInput.value;
+  const referenceMode = mode === "optimistic" ? "top1" : dom.referenceModeInput.value;
+  return { mode, referenceMode };
+},
 
     syncStateToControls(state) {
       dom.modeInput.value = state.mode;
@@ -578,7 +577,7 @@ return { ...p, skill, sigma, change };
   });
   dom.referenceModeInput.addEventListener("change", () => this.updateFromControls());
   dom.referenceModeInput.addEventListener("input", () => this.updateFromControls());
-}
+},
 
     async loadPlayers() {
   let players = [];
