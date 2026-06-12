@@ -357,7 +357,7 @@ async function setRatingsetGroup(groupName) {
       return { tierMap, gradeMap };
     },
 
-    createHeatFunction(enriched) {
+    createHeatFunction(sorted) {
       const vals = enriched.map(d => d.skill);
       const minS = Math.min(...vals);
       const maxS = Math.max(...vals);
