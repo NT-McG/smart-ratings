@@ -327,7 +327,7 @@ async function setRatingsetGroup(groupName) {
         } else if (mode === "optimistic") {
           let bonus = preset.strength * Math.log1p(rd / preset.scale);
           if (preset.useUnderdog) {
-            const underdogFactor = Math.max(0.7, Math.min(1.5, 1 + (ratingContext.meanRating - rating) / 400));
+            const underdogFactor = Math.max(0.7, Math.min(1.15, 1 + (ratingContext.meanRating - rating) / 400));
             bonus *= underdogFactor;
           }
           skill = rating + bonus;
