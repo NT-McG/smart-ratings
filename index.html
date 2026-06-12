@@ -556,65 +556,56 @@ async function setRatingsetGroup(groupName) {
     },
 
     async loadPlayers() {
-      let players = [];
+  let players = [];
 
-try {
+  try {
+    const ids = currentGroup
+      ? WEAPON_GROUPS[currentGroup]
+      : [currentRatingset];
 
-  const ids = currentGroup
-    ? WEAPON_GROUPS[currentGroup]
-    : [currentRatingset];
+    for (const id of ids) {
+      const res = await fetch(`${CONFIG.dataUrl}?ratingsetid=${id}`);
 
-  for (const id of ids) {
-    const res = await fetch(`${CONFIG.dataUrl}?ratingsetid=${id}`);
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-
-    data.forEach(p => p.weapon = id);
-    players.push(...data);
-  }
-
-} catch (err) {
-  console.error("Failed to load player data:", err);
-  ui.showError("Failed to load player data.");
-  return false;
-}
-
-//       let players = [];
-//       try {
-//         const res = await fetch(
-//   `${CONFIG.dataUrl}?ratingsetid=${currentRatingset}`
-// );
-//         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-//         players = await res.json();
-//       } catch (err) {
-//         console.error("Failed to load player data:", err);
-//         ui.showError("Failed to load player data. Check the API endpoint / CORS settings.");
-//         return false;
-}
-
-      this.players = players.filter(p => this.isAUorNZ(p.nationality));
-
-if (currentGroup) {
-  this.players = this.aggregateMultiWeapon(this.players);
-}
-
-      if (!this.players.length) {
-        ui.showError("No AU/NZ players found.");
-        return false;
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
 
-      const ratingValues = this.players.map(p => p.rating || 0);
-      this.ratingContext = {
-        meanRating: stats.mean(ratingValues),
-        medianRating: stats.median(ratingValues)
-      };
-      this.rawSorted = this.players.slice().sort((a, b) => (b.rating || 0) - (a.rating || 0));
-      return true;
-    },
+      const data = await res.json();
+
+      data.forEach(p => p.weapon = id);
+      players.push(...data);
+    }
+
+  } catch (err) {
+    console.error("Failed to load player data:", err);
+    ui.showError("Failed to load player data.");
+    return false;
+  }
+
+  this.players = players.filter(p => this.isAUorNZ(p.nationality));
+
+  if (currentGroup) {
+    this.players = this.aggregateMultiWeapon(this.players);
+  }
+
+  if (!this.players.length) {
+    ui.showError("No AU/NZ players found.");
+    return false;
+  }
+
+  const ratingValues = this.players.map(p => p.rating || 0);
+
+  this.ratingContext = {
+    meanRating: stats.mean(ratingValues),
+    medianRating: stats.median(ratingValues)
+  };
+
+  this.rawSorted = this.players
+    .slice()
+    .sort((a, b) => (b.rating || 0) - (a.rating || 0));
+
+  return true;
+},
 
     async init() {
       this.bindEvents();
