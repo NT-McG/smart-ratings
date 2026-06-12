@@ -32,6 +32,14 @@ tr:nth-child(even){background:#121621;}
 <h2><a href="RapierIndex.html">Rapier Rankings</a></h2>
 <h2><a href="RapierDaggerIndex.html">Rapier & Dagger Rankings</a></h2>
 <h2><a href="SideswordIndex.html">Sidesword Rankings</a></h2>
+
+  <div id="ratingsetButtons">
+  <button onclick="setRatingset(1)">Set 1</button>
+  <button onclick="setRatingset(9)">Set 9</button>
+  <button onclick="setRatingset(3)">Set 3</button>
+  <button onclick="setRatingset(5)">Set 5</button>
+  <button onclick="setRatingset(4)">Set 4</button>
+</div>
   
 <h2>AU-NZ Longsword Top 100 – Improved Regional Rating</h2>
   
@@ -102,7 +110,13 @@ tr:nth-child(even){background:#121621;}
 </table>
 
 <script>
+let currentRatingset = 1;
 
+// button handler (must be global if using inline onclick)
+async function setRatingset(id) {
+  currentRatingset = id;
+  await loadPlayers(currentRatingset);
+}
 (async () => {
   const CONFIG = {
     topN: 100,
@@ -450,7 +464,9 @@ tr:nth-child(even){background:#121621;}
     async loadPlayers() {
       let players = [];
       try {
-        const res = await fetch(`${CONFIG.dataUrl}?ratingsetid=1`);
+        const res = await fetch(
+      `${CONFIG.dataUrl}?ratingsetid=${ratingsetid}`
+    );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         players = await res.json();
       } catch (err) {
