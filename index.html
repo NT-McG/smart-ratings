@@ -324,9 +324,12 @@ async function setRatingsetGroup(groupName) {
           skill = rating + bonus;
         }
 
-        const sigma = rd;
-        const change = skill - rating;
-        return { ...p, skill, sigma, change };
+        let sigma = rd;
+        if (mode === "conservative") {
+        sigma = rd * (1 - preset.strength); // residual uncertainty after the skill discount
+        }
+const change = skill - rating;
+return { ...p, skill, sigma, change };
       });
     },
 
@@ -387,13 +390,16 @@ async function setRatingsetGroup(groupName) {
 
     renderSummary(state, derived) {
       const preset = CONFIG.modePresets[state.mode];
+      const sigmaLabel = state.mode === "conservative"
+        ? "Highest residual uncertainty in top 16"
+        : "Highest RD in top 16";
       dom.summaryGrid.innerHTML = [
         this.metricRow("Selected mode", preset.label),
         this.metricRow("Mode effect", preset.summary),
         this.metricRow("Average change", `${derived.averageChange >= 0 ? "+" : ""}${derived.averageChange.toFixed(1)}`),
         this.metricRow("Largest change", `${derived.maxAbsChange.toFixed(1)}`),
         this.metricRow("Top-16 changes", String(derived.top16DifferenceCount)),
-        this.metricRow("Highest RD in top 16", `${derived.top16MaxRd.toFixed(1)}`)
+        this.metricRow(sigmaLabel, `${derived.top16MaxRd.toFixed(1)}`)
       ].join("");
       dom.summaryNote.textContent = `${preset.label} is a curated analytical lens on the same published rating base.`;
     },
