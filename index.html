@@ -478,9 +478,9 @@ return { ...p, skill, sigma, change };
       const winProb = rankingEngine.createWinProbability(reference);
       let fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
       if (this.state.mode === "optimistic") {
-        const fieldReference = rankingEngine.buildReference("median", enriched);
+        const eliteReference = rankingEngine.buildReference("top16", enriched);
         const z = CONFIG.risingStarsZ;
-        fullSorted = fullSorted.filter(p => (p.skill - z * p.sigma) <= fieldReference.skill);
+        fullSorted = fullSorted.filter(p => (p.skill - z * p.sigma) <= eliteReference.skill);
       }
       const sorted = fullSorted.slice(0, CONFIG.topN);
       const { tierMap, gradeMap } = rankingEngine.buildTierMaps(sorted);
