@@ -48,9 +48,9 @@ tr:nth-child(even){background:#121621;}
   <li>Offers four views of the same Glicko-style data: raw rating, conservative lower-bound seeding, balanced local-centre shrinkage, and an optimistic upside model.</li>
   <li>Interprets the source dataset’s confidence value as Glicko-2 rating deviation (RD), where lower values mean higher trust and higher values mean more uncertainty.</li>
   <li><strong>Raw</strong> uses published rating only, with no uncertainty adjustment.</li>
-  <li><strong>Conservative</strong> discounts uncertain ratings to produce a more cautious ordering.</li>
-  <li><strong>Balanced</strong> pulls uncertain ratings toward the local median, tempering extreme uncertain placements.</li>
-  <li><strong>Optimistic</strong> gives uncertain improvers a bounded upside bonus while staying anchored to the published rating.</li>
+  <li><strong>Seeding</strong> discounts uncertain ratings to produce a more cautious ordering.</li>
+  <li><strong>Leaderboard</strong> pulls uncertain ratings toward the local median, tempering extreme uncertain placements.</li>
+  <li><strong>Rising Stars</strong> gives uncertain improvers a bounded upside bonus while staying anchored to the published rating.</li>
   <li><strong>Change</strong> shows how far the displayed skill moves from the published rating.</li>
   <li><strong>Vs Median</strong> estimates the chance of beating a synthetic reference fencer built from the selected comparison pool, using both displayed skill and both sides’ uncertainty.</li>
   <li>The alternative modes are analytical lenses on the same rating base, not replacements for the underlying Glicko-2 style rating.</li>
@@ -65,9 +65,9 @@ tr:nth-child(even){background:#121621;}
     Mode
     <select id="mode">
       <option value="raw">Raw HEMA Rating</option>
-      <option value="conservative">Conservative</option>
-      <option value="balanced">Balanced</option>
-      <option value="optimistic" selected>Optimistic</option>
+      <option value="conservative">Seeding</option>
+      <option value="balanced">Leaderboard</option>
+      <option value="optimistic" selected>Rising Stars</option>
     </select>
   </label>
   <label>
@@ -171,21 +171,21 @@ async function setRatingsetGroup(groupName) {
         strength: 0.75,
         scale: 60,
         useUnderdog: false,
-        label: "Conservative",
+        label: "Seeding (Conservative Algorithm)",
         summary: "Cautious lens that discounts uncertain ratings and favors proven stability."
       },
       balanced: {
         strength: 0.9,
         scale: 80,
         useUnderdog: false,
-        label: "Balanced",
+        label: "Leaderboard (Balanced Algorithm)",
         summary: "Middle-ground lens that shrinks uncertain extremes toward the local centre without overwhelming the published rating."
       },
       optimistic: {
         strength: 60,
         scale: 35,
         useUnderdog: true,
-        label: "Optimistic",
+        label: "Rising Stars (Optimistic Algorithm)",
         summary: "Upside-sensitive lens that gives uncertain improvers a bounded boost."
       }
     }
