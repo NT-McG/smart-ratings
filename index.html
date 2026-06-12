@@ -115,7 +115,8 @@ let currentRatingset = 1;
 // button handler (must be global if using inline onclick)
 async function setRatingset(id) {
   currentRatingset = id;
-  await loadPlayers(currentRatingset);
+  await app.loadPlayers();
+  app.render();
 }
 (async () => {
   const CONFIG = {
