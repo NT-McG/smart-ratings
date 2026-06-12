@@ -121,11 +121,11 @@ tr:nth-child(even){background:#121621;}
         summary: "Cautious lens that discounts uncertain ratings and favors proven stability."
       },
       balanced: {
-        strength: 4,
-        scale: 45,
+        strength: 1.5,
+        scale: 65,
         useUnderdog: false,
         label: "Balanced",
-        summary: "Middle-ground lens that shrinks uncertain extremes toward the local centre."
+        summary: "Middle-ground lens that shrinks uncertain extremes toward the local centre without overwhelming the published rating."
       },
       optimistic: {
         strength: 60,
@@ -204,7 +204,7 @@ tr:nth-child(even){background:#121621;}
         return `Conservative mode discounts uncertain ratings to create a more cautious ordering. ${referenceText}`;
       }
       if (mode === "balanced") {
-        return `Balanced mode shrinks uncertain ratings toward the local median, softening extreme uncertain placements. ${referenceText}`;
+        return `Balanced mode shrinks uncertain ratings toward the local median, softening extreme uncertain placements without collapsing elite ratings too aggressively. ${referenceText}`;
       }
       return `Optimistic mode gives a bounded uncertainty-based upside bonus while staying anchored to published ratings. ${referenceText}`;
     },
