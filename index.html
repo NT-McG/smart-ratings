@@ -357,7 +357,7 @@ async function setRatingsetGroup(groupName) {
       return { tierMap, gradeMap };
     },
 
-    createHeatFunction(sorted) {
+    createHeatFunction(enriched) {
       const vals = enriched.map(d => d.skill);
       const minS = Math.min(...vals);
       const maxS = Math.max(...vals);
@@ -465,7 +465,7 @@ async function setRatingsetGroup(groupName) {
       const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
       const sorted = fullSorted.slice(0, CONFIG.topN);
       const { tierMap, gradeMap } = rankingEngine.buildTierMaps(sorted);
-      const heat = rankingEngine.createHeatFunction(enriched);
+      const heat = rankingEngine.createHeatFunction(sorted);
       const averageChange = stats.mean(enriched.map(p => p.change));
       const maxAbsChange = Math.max(...enriched.map(p => Math.abs(p.change)), 0);
       const rawTop16 = this.rawSorted.slice(0, 16).map(p => p.athlete);
