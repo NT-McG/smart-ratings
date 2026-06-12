@@ -37,7 +37,9 @@ tr:nth-child(even){background:#121621;}
   
 </div>
   
-<h2>AU-NZ Longsword Top 100 – Improved Regional Rating</h2>
+<h2>
+  AU-NZ <span id="setName">Longsword</span> Top 100 – Improved Regional Rating
+</h2>
   
 <h3>How to read this table</h3>
 <ul>
@@ -108,11 +110,31 @@ tr:nth-child(even){background:#121621;}
 <script>
 let currentRatingset = 1;
 
+  function updateTitle() {
+  const names = {
+    1: "Longsword",
+    5: "Rapier",
+    4: "Rapier & Dagger",
+    3: "Sabre",
+    9: "Sidesword"
+  };
+
 // button handler (must be global if using inline onclick)
 async function setRatingset(id) {
   currentRatingset = id;
-  await app.loadPlayers();
-  app.render();
+
+  if (!window.app) return;
+
+  const ok = await window.app.loadPlayers();
+  if (ok) window.app.render();
+
+  updateTitle();
+}
+
+  
+
+  document.getElementById("setName").textContent =
+    names[currentRatingset] || "Unknown";
 }
 (async () => {
   const CONFIG = {
@@ -498,6 +520,7 @@ async function setRatingset(id) {
 
   await app.init();
   window.app = app;
+  updateTitle();
 })();
 
 </script>
