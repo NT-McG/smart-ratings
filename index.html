@@ -167,6 +167,7 @@ async function setRatingsetGroup(groupName) {
     baseTiers: 6,
     baseTierLabels: ["S", "A", "B", "C", "D", "F"],
     dataUrl: "https://icy-term-5678.nt-mcguigan.workers.dev",
+    risingStarsZ: 1, // how many σ of benefit-of-the-doubt before someone counts as "established"
     modePresets: {
       raw: {
         strength: 0,
@@ -476,7 +477,12 @@ return { ...p, skill, sigma, change };
       const enriched = rankingEngine.buildEnriched(this.players, this.ratingContext, this.state.mode);
       const reference = rankingEngine.buildReference(this.state.referenceMode, enriched);
       const winProb = rankingEngine.createWinProbability(reference);
-      const fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+      let fullSorted = enriched.slice().sort((a, b) => b.skill - a.skill);
+      if (this.state.mode === "optimistic") {
+        const fieldReference = rankingEngine.buildReference("median", enriched);
+        const z = CONFIG.risingStarsZ;
+        fullSorted = fullSorted.filter(p => (p.skill - z * p.sigma) <= fieldReference.skill);
+      }
       const sorted = fullSorted.slice(0, CONFIG.topN);
       const { tierMap, gradeMap } = rankingEngine.buildTierMaps(sorted);
       const heat = rankingEngine.createHeatFunction(sorted);
@@ -564,10 +570,15 @@ return { ...p, skill, sigma, change };
     },
 
     bindEvents() {
-      dom.modeInput.addEventListener("change", () => this.updateFromControls());
-      dom.referenceModeInput.addEventListener("change", () => this.updateFromControls());
-      dom.referenceModeInput.addEventListener("input", () => this.updateFromControls());
-    },
+  dom.modeInput.addEventListener("change", () => {
+    if (dom.modeInput.value === "optimistic") {
+      dom.referenceModeInput.value = "top1";
+    }
+    this.updateFromControls();
+  });
+  dom.referenceModeInput.addEventListener("change", () => this.updateFromControls());
+  dom.referenceModeInput.addEventListener("input", () => this.updateFromControls());
+}
 
     async loadPlayers() {
   let players = [];
