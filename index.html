@@ -465,8 +465,8 @@ async function setRatingset(id) {
       let players = [];
       try {
         const res = await fetch(
-      `${CONFIG.dataUrl}?ratingsetid=${ratingsetid}`
-    );
+  `${CONFIG.dataUrl}?ratingsetid=${currentRatingset}`
+);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         players = await res.json();
       } catch (err) {
